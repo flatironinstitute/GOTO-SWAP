@@ -6,12 +6,12 @@ In the simplest form, the following code creates the documentation below for the
 
 ```
 {eval-rst}
-.. automodule:: rs_template.python_library
+.. automodule:: goto_swap.base
    :members:
 ```
 
 ```{eval-rst}
-.. automodule:: rs_template.python_library
+.. automodule:: goto_swap.base
    :members:
 
 ```
