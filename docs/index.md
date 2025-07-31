@@ -1,6 +1,6 @@
-# Documentation for rs-template
+# Documentation for GOTO-SWAP
 
-Welcome to `rs-template`! This page, `docs/index.md`, will become the homepage of your documentation. You can use markdown to make this page look nice, such as by **bolding** and *italicising* important things.
+Welcome to `GOTO-SWAP`! This page, `docs/index.md`, will become the homepage of your documentation. You can use markdown to make this page look nice, such as by **bolding** and *italicising* important things.
 
 > Don't forget block quotes!
 

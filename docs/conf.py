@@ -16,16 +16,14 @@ import os
 import sys
 
 try:
-    from rs_template import __version__ as release
+    from goto_swap import __version__ as release
 except ImportError:
     release = "unknown"
 
 
 # -- Project information -----------------------------------------------------
 
-project = "rs-template"
-copyright = "2024, Dennis Brookner"
-author = "Dennis Brookner"
+project = "goto-swap"
 
 
 # # -- Generate API ------------------------------------------------------------
@@ -160,7 +158,7 @@ html_sourcelink_suffix = ""
 # html_static_path = ["_static"]
 html_theme = "sphinx_rtd_theme"
 
-html_favicon = "images/rs-favicon_32x32.png"
+# html_favicon = "images/rs-favicon_32x32.png"
 
 # html_theme_options = {
 #     "launch_buttons": {
@@ -177,7 +175,7 @@ html_favicon = "images/rs-favicon_32x32.png"
 #     "use_issues_button": True,
 #     "use_repository_button": True,
 # }
-html_title = "rs-template"
+html_title = "goto-swap"
 
 master_doc = "index"
 # thebe_config = {
@@ -225,6 +223,6 @@ def linkcode_resolve(domain, info):
     else:
         linespec = ""
 
-    fn = os.path.relpath(fn, start=os.path.dirname("../rs_template"))
+    fn = os.path.relpath(fn, start=os.path.dirname("../goto_swap"))
 
-    return f"https://github.com/rs-station/rs-template/blob/main/rs-template/{fn}{linespec}"  # noqa
+    return f"https://github.com/rs-station/GOTO-SWAP/blob/main/goto-swap/{fn}{linespec}"  # noqa

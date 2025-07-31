@@ -1,10 +1,14 @@
-# rs-template
+# GOTO-SWAP
 
-This is a template repo demonstrating best practices. You can make your own repo from this template, which should save you a lot of work! Just be sure to find-and-replace for "rs-template", "rs_template", and "dennisbrookner" and update everything.
+**G**radient-based **O**ptimal **T**ransport **O**ptimization -- **S**liced **W**asserstein **A**PI for **P**ipelines
 
-This file is a guide to the core elements that your project should have. In some cases, you may opt for a reasonable alternative, but all of this core functionality should be present.
+This repository provides a unified, lightweight API for sliced Wasserstein image targets, making it easy for users to swap in this loss function within their own inference pipelines.
 
-## General organization
+More experimental codes regarding the GOTO project itself can be found at: https://github.com/minhuanli/GOTO
+
+
+> [!NOTE]
+> The current repository adapts the `rs-station` template for a smooth and organized development experience. Keep the following instructions for future reference.
 
 The following files in this repo should be adapated for your repo:
 

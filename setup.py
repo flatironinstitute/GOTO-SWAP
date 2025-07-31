@@ -19,6 +19,6 @@ sys.exit(1)
 # To be removed once GitHub catches up.
 
 setup(  # noqa
-    name="rs-template",
+    name="goto-swap",
     install_requires=[],
 )
