@@ -30,15 +30,36 @@ dynamic = ["version"]
 # version='0.0.1'
 
 dependencies = [
-    "jax",
-    "dm_pix",
-    "flax",
-    # Maybe we need different branch of the package for different backends
+    "numpy>=1.20.0",
+    # Backend-specific dependencies are now optional
 ]
 
 # extras
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
+# JAX backend dependencies
+jax = [
+    "jax>=0.4.0",
+    "dm_pix>=0.4.0", 
+    "flax>=0.7.0",
+]
+
+# PyTorch backend dependencies  
+pytorch = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+]
+
+# All backends
+all = [
+    "jax>=0.4.0",
+    "dm_pix>=0.4.0", 
+    "flax>=0.7.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+]
+
+# Development dependencies
 test = ["pytest>=6.0", "pytest-cov"]
 
 docs = [
