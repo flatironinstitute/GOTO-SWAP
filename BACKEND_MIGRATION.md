@@ -32,7 +32,7 @@ pip install goto-swap[all]
 ### New Backend System (Recommended)
 
 ```python
-from goto_swap import wasserstein_distance_loss_images, get_backend
+from goto_swap import wasserstein_distance_loss_images, emd_1d_sorted_differentiable, get_backend
 
 # Use default JAX backend
 loss = wasserstein_distance_loss_images(x, x_true)
@@ -40,12 +40,22 @@ loss = wasserstein_distance_loss_images(x, x_true)
 # Use specific backend
 loss = wasserstein_distance_loss_images(x, x_true, backend="pytorch")
 
+# EMD 1D function
+emd_loss = emd_1d_sorted_differentiable(u, v, u_weights, v_weights, backend="jax")
+
 # Get backend instance directly for more control
 jax_backend = get_backend("jax")
 pytorch_backend = get_backend("pytorch")
 
 loss_jax = jax_backend.wasserstein_distance_loss_images(x, x_true)
 loss_pytorch = pytorch_backend.wasserstein_distance_loss_images(x, x_true)
+emd_loss_jax = jax_backend.emd_1d_sorted_differentiable(u, v, u_weights, v_weights)
+
+# Direct EMD function imports (for advanced usage)
+from goto_swap.backends.jax import emd_1d_sorted_jax_differentiable
+from goto_swap.backends.pytorch import emd_1d_sorted_pytorch_differentiable
+emd_loss_jax_direct = emd_1d_sorted_jax_differentiable(u, v, u_weights, v_weights)
+emd_loss_pytorch_direct = emd_1d_sorted_pytorch_differentiable(u, v, u_weights, v_weights)
 ```
 
 ### Legacy Usage (Deprecated)

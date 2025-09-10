@@ -37,6 +37,32 @@ class BackendInterface(ABC):
         pass
     
     @abstractmethod
+    def emd_1d_sorted_differentiable(
+        self,
+        u: ArrayLike,
+        v: ArrayLike, 
+        u_weights: ArrayLike,
+        v_weights: ArrayLike,
+        metric: str = 'sqeuclidean',
+        tol: float = 1e-12
+    ) -> ArrayLike:
+        """
+        Compute 1D Earth Mover's Distance.
+        
+        Args:
+            u: Sorted source positions
+            v: Sorted target positions
+            u_weights: Source weights
+            v_weights: Target weights
+            metric: Distance metric ('sqeuclidean', 'euclidean', or 'cityblock')
+            tol: Tolerance for floating point comparisons
+            
+        Returns:
+            EMD cost
+        """
+        pass
+    
+    @abstractmethod
     def get_backend_name(self) -> str:
         """Return the name of the backend."""
         pass
@@ -101,4 +127,32 @@ def wasserstein_distance_loss_images(
     """
     backend_impl = get_backend(backend)
     return backend_impl.wasserstein_distance_loss_images(x, x_true, num_rotations)
+
+
+def emd_1d_sorted_differentiable(
+    u: ArrayLike,
+    v: ArrayLike, 
+    u_weights: ArrayLike,
+    v_weights: ArrayLike,
+    metric: str = 'sqeuclidean',
+    tol: float = 1e-12,
+    backend: str = "jax"
+) -> ArrayLike:
+    """
+    Compute 1D Earth Mover's Distance.
+    
+    Args:
+        u: Sorted source positions
+        v: Sorted target positions
+        u_weights: Source weights
+        v_weights: Target weights
+        metric: Distance metric ('sqeuclidean', 'euclidean', or 'cityblock')
+        tol: Tolerance for floating point comparisons
+        backend: Backend to use ("jax" or "pytorch")
+        
+    Returns:
+        EMD cost
+    """
+    backend_impl = get_backend(backend)
+    return backend_impl.emd_1d_sorted_differentiable(u, v, u_weights, v_weights, metric, tol)
 

@@ -20,6 +20,7 @@ Tests are organized by backend and functionality:
 - **`TestBackendSystem`**: Core backend system functionality
 - **`TestJAXBackend`**: JAX-specific tests (marked with `@pytest.mark.jax`)
 - **`TestPyTorchBackend`**: PyTorch-specific tests (marked with `@pytest.mark.pytorch`)
+- **`TestDirectEMDFunctions`**: Direct EMD function import tests
 - **`TestBackendCompatibility`**: Backend compatibility and consistency tests
 - **`TestBackendErrors`**: Error handling tests
 

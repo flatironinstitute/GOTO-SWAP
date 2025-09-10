@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import math
 
 from .. import BackendInterface
+from .emd import emd_1d_sorted_pytorch_differentiable
 
 
 class PyTorchBackend(BackendInterface):
@@ -157,4 +158,21 @@ class PyTorchBackend(BackendInterface):
         # Compute pairwise squared L2 distances between CDFs
         diff = cdf_x - cdf_x_true  # (B, N, n)
         return (diff ** 2).sum(dim=-1)  # (B, N)
+    
+    def emd_1d_sorted_differentiable(self, u, v, u_weights, v_weights, metric='sqeuclidean', tol=1e-12):
+        """
+        Compute 1D Earth Mover's Distance using PyTorch.
+        
+        Args:
+            u: PyTorch tensor of sorted source positions
+            v: PyTorch tensor of sorted target positions  
+            u_weights: PyTorch tensor of source weights
+            v_weights: PyTorch tensor of target weights
+            metric: Distance metric ('sqeuclidean', 'euclidean', or 'cityblock')
+            tol: Tolerance for floating point comparisons
+            
+        Returns:
+            PyTorch tensor containing the EMD cost
+        """
+        return emd_1d_sorted_pytorch_differentiable(u, v, u_weights, v_weights, metric, tol)
 

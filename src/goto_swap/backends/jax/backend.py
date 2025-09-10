@@ -9,6 +9,7 @@ import dm_pix
 from flax import nnx
 
 from .. import BackendInterface
+from .emd import emd_1d_sorted_jax_differentiable
 
 
 class JAXBackend(BackendInterface):
@@ -92,4 +93,21 @@ class JAXBackend(BackendInterface):
         w = (w_pos + w_neg).mean()
 
         return w
+    
+    def emd_1d_sorted_differentiable(self, u, v, u_weights, v_weights, metric='sqeuclidean', tol=1e-12):
+        """
+        Compute 1D Earth Mover's Distance using JAX.
+        
+        Args:
+            u: JAX array of sorted source positions
+            v: JAX array of sorted target positions  
+            u_weights: JAX array of source weights
+            v_weights: JAX array of target weights
+            metric: Distance metric ('sqeuclidean', 'euclidean', or 'cityblock')
+            tol: Tolerance for floating point comparisons
+            
+        Returns:
+            JAX array containing the EMD cost
+        """
+        return emd_1d_sorted_jax_differentiable(u, v, u_weights, v_weights, metric, tol)
 

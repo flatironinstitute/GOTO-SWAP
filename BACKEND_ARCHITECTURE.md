@@ -15,10 +15,12 @@ src/goto_swap/
     ├── __init__.py             # Backend factory and interface
     ├── jax/                    # JAX backend implementation
     │   ├── __init__.py
-    │   └── backend.py          # JAXBackend class
+    │   ├── backend.py          # JAXBackend class
+    │   └── emd.py              # JAX EMD implementation
     └── pytorch/                # PyTorch backend implementation
         ├── __init__.py
-        └── backend.py          # PyTorchBackend class
+        ├── backend.py          # PyTorchBackend class
+        └── emd.py              # PyTorch EMD implementation
 ```
 
 ## Architecture Components
@@ -29,18 +31,20 @@ src/goto_swap/
 - **`get_backend(backend_name)`**: Factory function to get backend instances
 - **`wasserstein_distance_loss_images()`**: Convenience function with backend selection
 
-### 2. JAX Backend (`backends/jax/backend.py`)
+### 2. JAX Backend (`backends/jax/`)
 
-- **`JAXBackend`**: Implements the interface using JAX operations
+- **`JAXBackend`** (`backend.py`): Implements the interface using JAX operations
+- **`emd_1d_sorted_jax_differentiable`** (`emd.py`): JAX EMD implementation
 - Features:
   - JIT compilation with `@jax.jit`
   - Uses `dm_pix` for image operations
   - Uses `flax.nnx` for activation functions
   - Full automatic differentiation support
 
-### 3. PyTorch Backend (`backends/pytorch/backend.py`)
+### 3. PyTorch Backend (`backends/pytorch/`)
 
-- **`PyTorchBackend`**: Implements the interface using PyTorch operations
+- **`PyTorchBackend`** (`backend.py`): Implements the interface using PyTorch operations
+- **`emd_1d_sorted_pytorch_differentiable`** (`emd.py`): PyTorch EMD implementation
 - Features:
   - Native PyTorch tensors and operations
   - Custom Gaussian blur implementation

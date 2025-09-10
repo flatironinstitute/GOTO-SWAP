@@ -4,7 +4,7 @@ Tests for GOTO-SWAP backend system.
 
 import pytest
 import numpy as np
-from goto_swap import get_backend, wasserstein_distance_loss_images
+from goto_swap import get_backend, wasserstein_distance_loss_images, emd_1d_sorted_differentiable
 
 
 class TestBackendSystem:
@@ -84,6 +84,47 @@ class TestJAXBackend:
             
         except ImportError:
             pytest.skip("JAX backend not available")
+    
+    def test_jax_emd_1d(self):
+        """Test JAX backend EMD 1D computation."""
+        try:
+            import jax.numpy as jnp
+            backend = get_backend("jax")
+            
+            # Create simple test data for EMD
+            u = jnp.array([1.0, 2.0, 3.0])
+            v = jnp.array([1.5, 2.5, 3.5])
+            u_weights = jnp.array([0.3, 0.4, 0.3])
+            v_weights = jnp.array([0.2, 0.5, 0.3])
+            
+            loss = backend.emd_1d_sorted_differentiable(u, v, u_weights, v_weights)
+            
+            # Check output properties
+            assert isinstance(loss, jnp.ndarray)
+            assert loss.shape == ()  # Scalar
+            assert not np.isnan(float(loss))
+            assert not np.isinf(float(loss))
+            assert float(loss) >= 0  # Loss should be non-negative
+            
+        except ImportError:
+            pytest.skip("JAX backend not available")
+    
+    def test_jax_emd_convenience_function(self):
+        """Test EMD convenience function with JAX backend."""
+        try:
+            import jax.numpy as jnp
+            u = jnp.array([1.0, 2.0, 3.0])
+            v = jnp.array([1.5, 2.5, 3.5])
+            u_weights = jnp.array([0.3, 0.4, 0.3])
+            v_weights = jnp.array([0.2, 0.5, 0.3])
+            
+            loss = emd_1d_sorted_differentiable(u, v, u_weights, v_weights)
+            
+            assert isinstance(loss, jnp.ndarray)
+            assert not np.isnan(float(loss))
+            
+        except ImportError:
+            pytest.skip("JAX backend not available")
 
 
 @pytest.mark.pytorch
@@ -135,6 +176,128 @@ class TestPyTorchBackend:
             
         except ImportError:
             pytest.skip("PyTorch backend not available")
+    
+    def test_pytorch_emd_1d(self):
+        """Test PyTorch backend EMD 1D computation."""
+        try:
+            import torch
+            backend = get_backend("pytorch")
+            
+            # Create simple test data for EMD
+            u = torch.tensor([1.0, 2.0, 3.0])
+            v = torch.tensor([1.5, 2.5, 3.5])
+            u_weights = torch.tensor([0.3, 0.4, 0.3])
+            v_weights = torch.tensor([0.2, 0.5, 0.3])
+            
+            loss = backend.emd_1d_sorted_differentiable(u, v, u_weights, v_weights)
+            
+            # Check output properties
+            assert isinstance(loss, torch.Tensor)
+            assert loss.shape == ()  # Scalar
+            assert not torch.isnan(loss)
+            assert not torch.isinf(loss)
+            assert float(loss) >= 0  # Loss should be non-negative
+            
+        except ImportError:
+            pytest.skip("PyTorch backend not available")
+    
+    def test_pytorch_emd_convenience_function(self):
+        """Test EMD convenience function with PyTorch backend."""
+        try:
+            import torch
+            u = torch.tensor([1.0, 2.0, 3.0])
+            v = torch.tensor([1.5, 2.5, 3.5])
+            u_weights = torch.tensor([0.3, 0.4, 0.3])
+            v_weights = torch.tensor([0.2, 0.5, 0.3])
+            
+            loss = emd_1d_sorted_differentiable(u, v, u_weights, v_weights, backend="pytorch")
+            
+            assert isinstance(loss, torch.Tensor)
+            assert not torch.isnan(loss)
+            
+        except ImportError:
+            pytest.skip("PyTorch backend not available")
+
+
+class TestDirectEMDFunctions:
+    """Test direct EMD function imports."""
+    
+    def test_jax_direct_emd_import(self):
+        """Test direct import of JAX EMD function."""
+        try:
+            from goto_swap.backends.jax import emd_1d_sorted_jax_differentiable
+            import jax.numpy as jnp
+            
+            u = jnp.array([1.0, 2.0, 3.0])
+            v = jnp.array([1.5, 2.5, 3.5])
+            u_weights = jnp.array([0.3, 0.4, 0.3])
+            v_weights = jnp.array([0.2, 0.5, 0.3])
+            
+            loss = emd_1d_sorted_jax_differentiable(u, v, u_weights, v_weights)
+            
+            assert isinstance(loss, jnp.ndarray)
+            assert not np.isnan(float(loss))
+            assert float(loss) >= 0
+            
+        except ImportError:
+            pytest.skip("JAX backend not available")
+    
+    def test_pytorch_direct_emd_import(self):
+        """Test direct import of PyTorch EMD function."""
+        try:
+            from goto_swap.backends.pytorch import emd_1d_sorted_pytorch_differentiable
+            import torch
+            
+            u = torch.tensor([1.0, 2.0, 3.0])
+            v = torch.tensor([1.5, 2.5, 3.5])
+            u_weights = torch.tensor([0.3, 0.4, 0.3])
+            v_weights = torch.tensor([0.2, 0.5, 0.3])
+            
+            loss = emd_1d_sorted_pytorch_differentiable(u, v, u_weights, v_weights)
+            
+            assert isinstance(loss, torch.Tensor)
+            assert not torch.isnan(loss)
+            assert float(loss) >= 0
+            
+        except ImportError:
+            pytest.skip("PyTorch backend not available")
+    
+    def test_direct_emd_consistency(self):
+        """Test that direct EMD functions produce consistent results."""
+        try:
+            from goto_swap.backends.jax import emd_1d_sorted_jax_differentiable
+            from goto_swap.backends.pytorch import emd_1d_sorted_pytorch_differentiable
+            import jax.numpy as jnp
+            import torch
+            
+            # Create test data
+            u_np = np.array([1.0, 2.0, 3.0])
+            v_np = np.array([1.5, 2.5, 3.5])
+            u_weights_np = np.array([0.3, 0.4, 0.3])
+            v_weights_np = np.array([0.2, 0.5, 0.3])
+            
+            # JAX version
+            u_jax = jnp.array(u_np)
+            v_jax = jnp.array(v_np)
+            u_weights_jax = jnp.array(u_weights_np)
+            v_weights_jax = jnp.array(v_weights_np)
+            
+            loss_jax = emd_1d_sorted_jax_differentiable(u_jax, v_jax, u_weights_jax, v_weights_jax)
+            
+            # PyTorch version
+            u_torch = torch.from_numpy(u_np)
+            v_torch = torch.from_numpy(v_np)
+            u_weights_torch = torch.from_numpy(u_weights_np)
+            v_weights_torch = torch.from_numpy(v_weights_np)
+            
+            loss_pytorch = emd_1d_sorted_pytorch_differentiable(u_torch, v_torch, u_weights_torch, v_weights_torch)
+            
+            # Results should be numerically close
+            diff = abs(float(loss_jax) - float(loss_pytorch))
+            assert diff < 1e-6, f"JAX and PyTorch results differ by {diff}"
+            
+        except ImportError as e:
+            pytest.skip(f"Backend comparison not available: {e}")
 
 
 class TestBackendCompatibility:
