@@ -29,7 +29,7 @@ def run_tests(backend=None, verbose=False, coverage=False):
     
     if backend:
         # Run tests for specific backend
-        cmd.extend(["-m", backend])
+        cmd.extend(["--backend", backend])
         print(f"Running tests for {backend} backend...")
     else:
         # Run all tests

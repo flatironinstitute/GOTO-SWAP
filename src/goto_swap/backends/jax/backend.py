@@ -21,7 +21,6 @@ class JAXBackend(BackendInterface):
     def get_backend_name(self) -> str:
         return self.backend_name
     
-    @partial(jax.jit, static_argnames=['num_rotations'])
     def wasserstein_distance_loss_images(
         self, 
         x: jnp.ndarray, 
@@ -31,7 +30,8 @@ class JAXBackend(BackendInterface):
         """
         Compute Wasserstein distance loss between images using sliced Wasserstein.
         
-        This is the JAX implementation with JIT compilation support.
+        This is the JAX implementation. For JIT compilation, use the backend directly:
+        jit_fn = jax.jit(backend.wasserstein_distance_loss_images, static_argnames=['num_rotations'])
         
         Args:
             x: Predicted images (B, H, W) or (B, H, W, C)

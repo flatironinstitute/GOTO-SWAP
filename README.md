@@ -112,13 +112,16 @@ from goto_swap.backends.pytorch import emd_1d_sorted_pytorch_differentiable
 ```python
 import jax
 import jax.numpy as jnp
-from goto_swap import wasserstein_distance_loss_images
+from goto_swap import get_backend
 
-# JIT compile for performance
-jit_loss = jax.jit(wasserstein_distance_loss_images, static_argnames=['backend'])
+# Get backend and JIT compile for performance
+backend = get_backend("jax")
+jit_loss = jax.jit(backend.wasserstein_distance_loss_images, static_argnames=['num_rotations'])
 
 # Use compiled function
-loss = jit_loss(x, x_true, backend="jax")
+x = jnp.random.normal(jax.random.PRNGKey(0), (2, 32, 32))
+x_true = jnp.random.normal(jax.random.PRNGKey(1), (2, 32, 32))
+loss = jit_loss(x, x_true, num_rotations=100)
 ```
 
 ### PyTorch with Gradients
@@ -181,17 +184,81 @@ src/goto_swap/
 
 ## Testing
 
-Run tests for specific backends:
+GOTO-SWAP includes comprehensive tests for both major functionalities. Tests are organized by backend to avoid compatibility issues.
 
+### Quick Testing
+
+**Test specific backend:**
 ```bash
-# Test JAX backend
+# Test JAX backend only
 python run_tests.py --backend jax
 
-# Test PyTorch backend  
+# Test PyTorch backend only
 python run_tests.py --backend pytorch
 
 # Test all available backends
 python run_tests.py
+```
+
+**Using pytest directly:**
+```bash
+# Test JAX backend
+pytest tests/ --backend jax
+
+# Test PyTorch backend
+pytest tests/ --backend pytorch
+
+# Test specific functionality
+pytest tests/test_wasserstein_distance.py --backend jax
+pytest tests/test_emd_1d.py --backend pytorch
+```
+
+### Test Categories
+
+**Systematic Tests:**
+- `test_wasserstein_distance.py` - Wasserstein distance functionality
+- `test_emd_1d.py` - EMD 1D functionality  
+- `test_emd_comparison.py` - Comparison with reference implementations
+- `test_backends.py` - Backend system tests
+
+**Test Features:**
+- ✅ Backend-specific filtering
+- ✅ Reference implementation validation
+- ✅ Gradient computation testing
+- ✅ JIT compilation testing
+- ✅ Cross-backend consistency
+- ✅ Edge case coverage
+
+### Environment-Specific Testing
+
+**JAX Environment:**
+```bash
+mamba activate ./envs/goto-swap-jax
+python run_tests.py --backend jax
+```
+
+**PyTorch Environment:**
+```bash
+mamba activate ./envs/goto-swap-pytorch
+python run_tests.py --backend pytorch
+```
+
+### Advanced Testing Options
+
+**With coverage:**
+```bash
+python run_tests.py --backend jax --coverage
+```
+
+**Verbose output:**
+```bash
+python run_tests.py --backend pytorch --verbose
+```
+
+**Specific test files:**
+```bash
+pytest tests/test_wasserstein_distance.py --backend jax -v
+pytest tests/test_emd_1d.py --backend pytorch -v
 ```
 
 ### Error Handling

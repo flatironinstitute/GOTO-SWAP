@@ -36,6 +36,7 @@ class TestBackendSystem:
 
 
 @pytest.mark.jax
+@pytest.mark.backend
 class TestJAXBackend:
     """Test JAX backend functionality."""
     
@@ -128,6 +129,7 @@ class TestJAXBackend:
 
 
 @pytest.mark.pytorch
+@pytest.mark.backend
 class TestPyTorchBackend:
     """Test PyTorch backend functionality."""
     
