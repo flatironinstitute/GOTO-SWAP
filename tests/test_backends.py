@@ -309,16 +309,17 @@ class TestBackendCompatibility:
         """Test legacy compatibility with deprecation warning."""
         try:
             import jax.numpy as jnp
-            from goto_swap.base import wasserstein_distance_loss_images as legacy_func
             
             x, x_true = test_data_small
             x_jax = jnp.array(x)
             x_true_jax = jnp.array(x_true)
             
-            # Should show deprecation warning
-            with pytest.warns(DeprecationWarning):
-                loss = legacy_func(x_jax, x_true_jax, num_rotations=5)
+            # Should show deprecation warning on import
+            with pytest.warns(DeprecationWarning, match="goto_swap.base is deprecated"):
+                from goto_swap.base import wasserstein_distance_loss_images as legacy_func
             
+            # Test that the function still works
+            loss = legacy_func(x_jax, x_true_jax, num_rotations=5)
             assert not np.isnan(float(loss))
             
         except ImportError:
