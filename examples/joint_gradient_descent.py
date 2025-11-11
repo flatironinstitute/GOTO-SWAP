@@ -306,7 +306,7 @@ def main(cfg: FullConfig):
     # JIT the gradient function: use jax.jit on the Equinox-filtered grad to
     # avoid equinox's static-arg hashing issues with non-hashable dataclass
     # instances.
-    grad_loss_for_params = eqx.filter_jit(eqx.filter_grad(loss_for_params))
+    grad_loss_for_params = jax.filter_jit(eqx.filter_grad(loss_for_params))
 
     # --- Example gradient descent loop ---
     key = jax.random.PRNGKey(0)
