@@ -20,8 +20,8 @@ setup:
           theta_angle: 0.0
           psi_angle: 0.0
         translation:
-          offset_x_in_angstroms: -2.0
-          offset_y_in_angstroms: -2.0
+          offset_x_in_angstroms: 0
+          offset_y_in_angstroms: 0.0
     ctf:
         defocus_in_angstroms: 2000.0
         voltage: 300.0
@@ -31,6 +31,8 @@ setup:
     cv:
         type: tear
         value: 0.0
+
+
 optimization:
     learning_rate: 0.01
     n_iterations: 1000
@@ -40,11 +42,16 @@ optimization:
         n_pixels: 300
         normalize_safely_epsilon: 1e-8
     preconditioner:
-      defocus_to_cv_ratio: 100000.0
-      quaternion_to_cv_ratio: 0.1
-      offset_to_cv_ratio: 5.0
+      cv: 0.1
+      defocus: 1000.0
+      quaternion: 0.001
+      offset: 0.1
+    optimize_these_variables:
+      cv: false
+      defocus: false
+      rotation: true
+      translation: false
 
-        
 
 inference_model:
     noise:
@@ -56,12 +63,12 @@ inference_model:
             value: ${setup.cv.value}
         pose:
             euler_angles_deg:
-              phi_angle: ${setup.pose.euler_angles_deg.phi_angle}
-              theta_angle: ${setup.pose.euler_angles_deg.theta_angle}
-              psi_angle: ${setup.pose.euler_angles_deg.psi_angle}
+              phi_angle: 0
+              theta_angle: 0
+              psi_angle: 0.5
             translation:
-              offset_x_in_angstroms: 0.0
-              offset_y_in_angstroms: 0.0
+              offset_x_in_angstroms: ${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: ${setup.pose.translation.offset_y_in_angstroms}
         ctf:
             defocus_in_angstroms: ${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}

@@ -102,9 +102,19 @@ class SlicedWassersteinConfig:
 
 @dataclass
 class PreconditionerConfig:
-    defocus_to_cv_ratio: float
-    quaternion_to_cv_ratio: float
-    offset_to_cv_ratio: float
+    cv: float
+    defocus: float
+    quaternion: float
+    offset: float
+
+
+@dataclass
+class OptimizeTheseVariablesConfig:
+    cv: bool
+    defocus: bool
+    rotation: bool
+    translation: bool
+
 
 @dataclass
 class OptimizationConfig:
@@ -113,6 +123,7 @@ class OptimizationConfig:
     sliced_wasserstein: SlicedWassersteinConfig
     print_every: int
     preconditioner: PreconditionerConfig
+    optimize_these_variables: OptimizeTheseVariablesConfig
 
 
 @dataclass
@@ -229,7 +240,6 @@ def main(cfg: FullConfig):
                 amplitudes=config.setup.integrator.atom_amplitude,
                 variances=config.setup.integrator.atom_width**2,
             )
-    # gaussian_integrator = cxs.GaussianMixtureProjection()
     pose = cxs.QuaternionPose(wxyz=cxs.EulerAnglePose(
         phi_angle=config.setup.pose.euler_angles_deg.phi_angle,
         theta_angle=config.setup.pose.euler_angles_deg.theta_angle,
@@ -247,17 +257,6 @@ def main(cfg: FullConfig):
         quantity_mode='intensity'
     )
     image_ref = image_model.simulate()
-
-
-    # envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, 
-    #                            b_factor=config.setup.envelope.b_factor)
-    # transfer_theory = cxs.ContrastTransferTheory(
-    #         cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
-    #         envelope=envelope,
-    #     )
-    # scattering_theory = WeakPhaseScatteringTheory(gaussian_integrator, transfer_theory)
-    # image_ref = irfftn(scattering_theory.compute_intensity_spectrum(volume, image_config))
-
 
     plt.imshow(image_ref, cmap='gray')
     plt.show()
@@ -303,12 +302,9 @@ def main(cfg: FullConfig):
             key=key,
         )
 
-    # JIT the gradient function: use jax.jit on the Equinox-filtered grad to
-    # avoid equinox's static-arg hashing issues with non-hashable dataclass
-    # instances.
-    grad_loss_for_params = jax.filter_jit(eqx.filter_grad(loss_for_params))
+    value_and_grad_for_params = eqx.filter_value_and_grad(loss_for_params)  
+    value_and_grad_for_params_jit = eqx.filter_jit(value_and_grad_for_params)
 
-    # --- Example gradient descent loop ---
     key = jax.random.PRNGKey(0)
     cv = jnp.array(config.inference_model.initial_estimates.cv.value)
     defocus = jnp.array(config.inference_model.initial_estimates.ctf.defocus_in_angstroms)
@@ -329,36 +325,55 @@ def main(cfg: FullConfig):
         offset_y_in_angstroms=offset_y_in_angstroms,
     )
 
-    def optimization(optimization, key, initial_params: OptParams):
-        lr = optimization.learning_rate
+    # --- Optimization routine ---
+    def optimization(optimization_cfg, key, initial_params: OptParams):
+        lr = optimization_cfg.learning_rate
+        n_iters = optimization_cfg.n_iterations
+
+        # preallocate lists (you can store as python lists and convert to jnp at end)
         losses = []
         cvs = []
         defoci = []
         wxyzs = []
         offset_xs = []
         offset_ys = []
+
         params = initial_params
-        for i in range(optimization.n_iterations):
+
+        for i in range(n_iters):
             key, subkey = jax.random.split(key)
-            # compute loss and gradients w.r.t. the packed params
-            loss_val = loss_for_params(params, subkey)
-            grads = grad_loss_for_params(params, subkey)
+            # compute value and gradients in one shot (JITed)
+            loss_val, grads = value_and_grad_for_params_jit(params, subkey)
 
-            losses.append(loss_val)
-            cvs.append(params.cv)
-            defoci.append(params.defocus)
-            wxyzs.append(params.wxyz)
-            offset_xs.append(params.offset_x_in_angstroms)
-            offset_ys.append(params.offset_y_in_angstroms)
+            # record traces
+            losses.append(float(loss_val))
+            cvs.append(float(params.cv))
+            defoci.append(float(params.defocus))
+            wxyzs.append(jnp.array(params.wxyz))  # store array form for quaternion
+            offset_xs.append(float(params.offset_x_in_angstroms))
+            offset_ys.append(float(params.offset_y_in_angstroms))
 
-            # apply simple SGD updates (add preconditioning/scaling as needed)
-            cv_new = params.cv - lr * grads.cv
-            defocus_new = params.defocus - lr * grads.defocus * optimization.preconditioner.defocus_to_cv_ratio
-            wxyz_new = params.wxyz - lr * grads.wxyz * optimization.preconditioner.quaternion_to_cv_ratio
-            wxyz_new = wxyz_new / (jnp.linalg.norm(wxyz_new) + 1e-12)
-            offset_x_new = params.offset_x_in_angstroms - lr * grads.offset_x_in_angstroms * optimization.preconditioner.offset_to_cv_ratio
-            offset_y_new = params.offset_y_in_angstroms - lr * grads.offset_y_in_angstroms * optimization.preconditioner.offset_to_cv_ratio
-
+            # SGD-like update (apply preconditioning factors from config)
+            if optimization_cfg.optimize_these_variables.cv:
+                cv_new = params.cv - lr * grads.cv * optimization_cfg.preconditioner.cv
+            else:
+                cv_new = params.cv
+            if optimization_cfg.optimize_these_variables.defocus:
+                defocus_new = params.defocus - lr * grads.defocus * optimization_cfg.preconditioner.defocus
+            else:
+                defocus_new = params.defocus
+            if optimization_cfg.optimize_these_variables.rotation:
+                quaternion_normalize_safely_epsilon = 1e-12
+                wxyz_new = params.wxyz - lr * grads.wxyz * optimization_cfg.preconditioner.quaternion + quaternion_normalize_safely_epsilon
+                wxyz_new = wxyz_new / (jnp.linalg.norm(wxyz_new) )
+            else:
+                wxyz_new = params.wxyz
+            if optimization_cfg.optimize_these_variables.translation:
+                offset_x_new = params.offset_x_in_angstroms - lr * grads.offset_x_in_angstroms * optimization_cfg.preconditioner.offset
+                offset_y_new = params.offset_y_in_angstroms - lr * grads.offset_y_in_angstroms * optimization_cfg.preconditioner.offset
+            else:
+                offset_x_new = params.offset_x_in_angstroms
+                offset_y_new = params.offset_y_in_angstroms
             params = OptParams(
                 cv=cv_new,
                 defocus=defocus_new,
@@ -367,12 +382,27 @@ def main(cfg: FullConfig):
                 offset_y_in_angstroms=offset_y_new,
             )
 
-            if i % optimization.print_every == 0:
+            if i % optimization_cfg.print_every == 0:
                 print(
-                    f"Step {i:02d}: loss={float(loss_val):.6e}, cv={float(params.cv):.6f}, defocus={float(params.defocus):.6f}, offset_x={float(params.offset_x_in_angstroms):.6f}, offset_y={float(params.offset_y_in_angstroms):.6f}"
+                    f"Step {i:03d}: loss={loss_val:.6e}, cv={float(params.cv):.6f}, defocus={float(params.defocus):.6f}, "
+                    f"offset_x={float(params.offset_x_in_angstroms):.6f}, offset_y={float(params.offset_y_in_angstroms):.6f}, "
+                    f"wxyz=({float(params.wxyz[0]):.6f}, {float(params.wxyz[1]):.6f}, {float(params.wxyz[2]):.6f}, {float(params.wxyz[3]):.6f}), "
+                    f"grad_cv={float(grads.cv):.6f}, "
+                    f"grad_defocus={float(grads.defocus):.6f}, "
+                    f"grad_offset_x={float(grads.offset_x_in_angstroms):.6f}, "
+                    f"grad_offset_y={float(grads.offset_y_in_angstroms):.6f}, "
+                    f"grad_wxyz=({float(grads.wxyz[0]):.6f}, {float(grads.wxyz[1]):.6f}, {float(grads.wxyz[2]):.6f}, {float(grads.wxyz[3]):.6f})"
                 )
 
-        return jnp.array(losses), jnp.array(cvs), jnp.array(defoci), jnp.array(wxyzs), jnp.array(offset_xs), jnp.array(offset_ys)
+        # convert list traces into jnp arrays when desired
+        return (
+            jnp.array(losses),
+            jnp.array(cvs),
+            jnp.array(defoci),  # keep old naming
+            jnp.stack(wxyzs),
+            jnp.array(offset_xs),
+            jnp.array(offset_ys),
+        )
 
     losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
 
