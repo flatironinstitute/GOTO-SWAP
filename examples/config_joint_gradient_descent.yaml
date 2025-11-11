@@ -15,8 +15,13 @@ setup:
         atom_width: 0.25
         atom_amplitude: 1.0
     pose:
-        rotation: [0.0, 0.0, 0.0]
-        translation: [0.0, 0.0]
+        euler_angles_deg:
+          phi_angle: 0.0
+          theta_angle: 0.0
+          psi_angle: 0.0
+        translation:
+          offset_x_in_angstroms: -2.0
+          offset_y_in_angstroms: -2.0
     ctf:
         defocus_in_angstroms: 2000.0
         voltage: 300.0
@@ -29,13 +34,16 @@ setup:
 optimization:
     learning_rate: 0.01
     n_iterations: 1000
-    print_every: 1
+    print_every: 10
     sliced_wasserstein:
         n_projections: 30
         n_pixels: 300
         normalize_safely_epsilon: 1e-8
     preconditioner:
       defocus_to_cv_ratio: 100000.0
+      quaternion_to_cv_ratio: 0.1
+      offset_to_cv_ratio: 5.0
+
         
 
 inference_model:
@@ -45,11 +53,17 @@ inference_model:
     initial_estimates:
         cv:
             type: ${setup.cv.type}
-            value: 0.0
-        rotation: [5.0, 5.0, 5.0]
-        translation: [1.0, 1.0]
+            value: ${setup.cv.value}
+        pose:
+            euler_angles_deg:
+              phi_angle: ${setup.pose.euler_angles_deg.phi_angle}
+              theta_angle: ${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: ${setup.pose.euler_angles_deg.psi_angle}
+            translation:
+              offset_x_in_angstroms: 0.0
+              offset_y_in_angstroms: 0.0
         ctf:
-            defocus_in_angstroms: 1900.0
+            defocus_in_angstroms: ${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}
     integrator:
         atom_width: ${setup.integrator.atom_width}

@@ -40,11 +40,23 @@ class IntegratorConfig:
     atom_width: float
     atom_amplitude: float
 
+@dataclass
+class EulerAnglesDegConfig:
+    phi_angle: float
+    theta_angle: float
+    psi_angle: float
+
+
+@dataclass
+class TranslationConfig:
+    offset_x_in_angstroms: float
+    offset_y_in_angstroms: float
+
 
 @dataclass
 class PoseConfig:
-    rotation: List[float] = field(default_factory=list)
-    translation: List[float] = field(default_factory=list)
+    euler_angles_deg: EulerAnglesDegConfig
+    translation: TranslationConfig
 
 
 @dataclass
@@ -91,6 +103,8 @@ class SlicedWassersteinConfig:
 @dataclass
 class PreconditionerConfig:
     defocus_to_cv_ratio: float
+    quaternion_to_cv_ratio: float
+    offset_to_cv_ratio: float
 
 @dataclass
 class OptimizationConfig:
@@ -104,8 +118,7 @@ class OptimizationConfig:
 @dataclass
 class InitialEstimates:
     cv: CVConfig
-    rotation: List[float]
-    translation: List[float]
+    pose: PoseConfig
     ctf: CTFConfig
     integrator: IntegratorConfig
 
@@ -152,42 +165,41 @@ def tear_cv(positions: jnp.ndarray, normal: jnp.ndarray, offset: float, tear_amo
     return displaced_positions
 
 
-def apply_rotation_and_cv(volume, scattering_theory, image_config, rotation_matrix, cv_scalar, defocus_scalar):
-    new_positions = tear_cv(volume.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
-    rotated_positions = new_positions @ rotation_matrix.T
-    volume_updated = eqx.tree_at(lambda v: v.positions, volume, rotated_positions)
-    # scattering_theory = WeakPhaseScatteringTheory(integrator, transfer_theory)
-    scattering_theory = eqx.tree_at(lambda m: m.transfer_theory.ctf.defocus_in_angstroms, scattering_theory, defocus_scalar)
-
-    image_ref = irfftn(scattering_theory.compute_intensity_spectrum(volume_updated, image_config))
+def apply_rotation_and_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms):
+    new_positions = tear_cv(image_model.volume_parametrization.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
+    image_model_updated = eqx.tree_at(lambda im: im.volume_parametrization.positions, image_model, new_positions)
+    image_model_updated = eqx.tree_at(lambda im: im.pose.offset_in_angstroms, image_model_updated, jnp.array([offset_x_in_angstroms, offset_y_in_angstroms]))
+    image_model_updated = eqx.tree_at(lambda im: im.pose.wxyz, image_model_updated, wxyz)
+    image_model_updated = eqx.tree_at(lambda im: im.scattering_theory.transfer_theory.ctf.defocus_in_angstroms, image_model_updated, defocus_scalar)
+    image_ref = image_model_updated.simulate()
     return image_ref
 
 
-def loss_for_pose_and_cv(image_ref, volume, scattering_theory, image_config, rotation_matrix, cv_scalar, defocus_scalar, grid, sliced_wasserstein, key):
-    image_1 = apply_rotation_and_cv(volume, scattering_theory, image_config, rotation_matrix, cv_scalar, defocus_scalar) 
+def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, grid, sliced_wasserstein, key):
+    image_1 = apply_rotation_and_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms) 
     
 
     def wasserstein_random_projections(image_1, image_2, key):
-        # return jnp.linalg.norm(image_1 - image_2)
+        return jnp.linalg.norm(image_1 - image_2)
         
-        v_weights = image_1.flatten()
-        u_weights = image_2.flatten()
+        # v_weights = image_1.flatten()
+        # u_weights = image_2.flatten()
 
-        thetas = jnp.linspace(0, jnp.pi, sliced_wasserstein.n_projections, endpoint=False) 
-        keys = jax.random.split(key, len(thetas))
+        # thetas = jnp.linspace(0, jnp.pi, sliced_wasserstein.n_projections, endpoint=False) 
+        # keys = jax.random.split(key, len(thetas))
 
-        def loss_per_theta(theta, key):
-            project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
-            perm = jax.random.permutation(key, len(project))[:sliced_wasserstein.n_pixels]
-            x_ab = project[perm]
-            sort_idx = jnp.argsort(x_ab)
-            x_ab_sorted = x_ab[sort_idx]
-            a_sorted = u_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
-            b_sorted = v_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
-            return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
+        # def loss_per_theta(theta, key):
+        #     project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
+        #     perm = jax.random.permutation(key, len(project))[:sliced_wasserstein.n_pixels]
+        #     x_ab = project[perm]
+        #     sort_idx = jnp.argsort(x_ab)
+        #     x_ab_sorted = x_ab[sort_idx]
+        #     a_sorted = u_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
+        #     b_sorted = v_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
+        #     return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
 
-        losses = jax.vmap(loss_per_theta)(thetas, keys)
-        return losses.mean()
+        # losses = jax.vmap(loss_per_theta)(thetas, keys)
+        # return losses.mean()
     return wasserstein_random_projections(image_1, image_ref, key)
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
@@ -217,31 +229,36 @@ def main(cfg: FullConfig):
                 amplitudes=config.setup.integrator.atom_amplitude,
                 variances=config.setup.integrator.atom_width**2,
             )
-    gaussian_integrator = cxs.GaussianMixtureProjection()
-    # image_model = cxs.make_image_model(
-    #     volume,
-    #     image_config,
-    #     pose=cxs.EulerAnglePose(),
-    #     transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms)),
-    #     simulates_quantity=True,
-    #     quantity_mode='intensity'
-    # )
-    # image_ref = image_model.simulate()
-    # image_ref = apply_rotation_and_cv(volume, 
-    #                                  gaussian_integrator, 
-    #                                  image_config, 
-    #                                  rotation_matrix=jnp.eye(3), 
-    #                                  cv_scalar=config.setup.cv.value,
-    #                                  defocus_scalar=config.setup.ctf.defocus_in_angstroms)
-
-    envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, 
-                               b_factor=config.setup.envelope.b_factor)
-    transfer_theory = cxs.ContrastTransferTheory(
-            cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
-            envelope=envelope,
+    # gaussian_integrator = cxs.GaussianMixtureProjection()
+    pose = cxs.QuaternionPose(wxyz=cxs.EulerAnglePose(
+        phi_angle=config.setup.pose.euler_angles_deg.phi_angle,
+        theta_angle=config.setup.pose.euler_angles_deg.theta_angle,
+        psi_angle=config.setup.pose.euler_angles_deg.psi_angle,
+        ).rotation.wxyz, 
+        offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms, 
+        offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms
         )
-    scattering_theory = WeakPhaseScatteringTheory(gaussian_integrator, transfer_theory)
-    image_ref = irfftn(scattering_theory.compute_intensity_spectrum(volume, image_config))
+    image_model = cxs.make_image_model(
+        volume,
+        image_config,
+        pose=pose,
+        transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms)),
+        simulates_quantity=True,
+        quantity_mode='intensity'
+    )
+    image_ref = image_model.simulate()
+
+
+    # envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, 
+    #                            b_factor=config.setup.envelope.b_factor)
+    # transfer_theory = cxs.ContrastTransferTheory(
+    #         cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
+    #         envelope=envelope,
+    #     )
+    # scattering_theory = WeakPhaseScatteringTheory(gaussian_integrator, transfer_theory)
+    # image_ref = irfftn(scattering_theory.compute_intensity_spectrum(volume, image_config))
+
+
     plt.imshow(image_ref, cmap='gray')
     plt.show()
 
@@ -252,54 +269,132 @@ def main(cfg: FullConfig):
         indexing='ij',
     )
     grid = jnp.stack([xm, ym], axis=-1)
-    proj_obs = apply_rotation_and_cv(volume=volume, 
-                                     scattering_theory=scattering_theory,
-                                     image_config=image_config, 
-                                     rotation_matrix=jnp.eye(3), 
-                                     cv_scalar=config.setup.cv.value, 
-                                     defocus_scalar=config.setup.ctf.defocus_in_angstroms) 
-    def loss_for_cv(cv, defocus, key):
-        return loss_for_pose_and_cv(image_ref=proj_obs, 
-                                    volume=volume, 
-                                    scattering_theory=scattering_theory, 
-                                    image_config=image_config, 
-                                    rotation_matrix=jnp.eye(3), 
-                                    cv_scalar=cv, 
-                                    defocus_scalar=defocus,
-                                    grid=grid, 
-                                    sliced_wasserstein=config.optimization.sliced_wasserstein, 
-                                    key=key)
+    proj_obs = apply_rotation_and_cv(
+        image_model=image_model,
+        wxyz=pose.wxyz,
+        offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms,
+        offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms,
+        cv_scalar=config.setup.cv.value,
+        defocus_scalar=config.setup.ctf.defocus_in_angstroms,
+    )
 
-    grad_loss_for_cv = eqx.filter_jit(eqx.filter_grad(loss_for_cv))
+    # Pack differentiable variables into a dataclass so equinox can return
+    # a matching gradient structure (vectorized gradient).
+    # Make OptParams an Equinox pytree (dataclass subclassing eqx.Module)
+    @dataclass
+    class OptParams(eqx.Module):
+        cv: jnp.ndarray
+        defocus: jnp.ndarray
+        wxyz: jnp.ndarray
+        offset_x_in_angstroms: jnp.ndarray
+        offset_y_in_angstroms: jnp.ndarray
+
+    def loss_for_params(params: OptParams, key):
+        return loss_for_pose_and_cv(
+            image_ref=proj_obs,
+            image_model=image_model,
+            cv_scalar=params.cv,
+            defocus_scalar=params.defocus,
+            wxyz=params.wxyz,
+            offset_x_in_angstroms=params.offset_x_in_angstroms,
+            offset_y_in_angstroms=params.offset_y_in_angstroms,
+            grid=grid,
+            sliced_wasserstein=config.optimization.sliced_wasserstein,
+            key=key,
+        )
+
+    # JIT the gradient function: use jax.jit on the Equinox-filtered grad to
+    # avoid equinox's static-arg hashing issues with non-hashable dataclass
+    # instances.
+    grad_loss_for_params = eqx.filter_jit(eqx.filter_grad(loss_for_params))
 
     # --- Example gradient descent loop ---
-    key = jax.random.key(0)
+    key = jax.random.PRNGKey(0)
     cv = jnp.array(config.inference_model.initial_estimates.cv.value)
     defocus = jnp.array(config.inference_model.initial_estimates.ctf.defocus_in_angstroms)
+    wxyz = cxs.EulerAnglePose(
+        phi_angle=config.inference_model.initial_estimates.pose.euler_angles_deg.phi_angle,
+        theta_angle=config.inference_model.initial_estimates.pose.euler_angles_deg.theta_angle,
+        psi_angle=config.inference_model.initial_estimates.pose.euler_angles_deg.psi_angle,
+    ).rotation.wxyz
+    offset_x_in_angstroms = jnp.array(config.inference_model.initial_estimates.pose.translation.offset_x_in_angstroms)
+    offset_y_in_angstroms = jnp.array(config.inference_model.initial_estimates.pose.translation.offset_y_in_angstroms)
 
-    def optimization(optimization, key, initial_cv, initial_defocus):
+    # initial params packed as a dataclass
+    params0 = OptParams(
+        cv=cv,
+        defocus=defocus,
+        wxyz=wxyz,
+        offset_x_in_angstroms=offset_x_in_angstroms,
+        offset_y_in_angstroms=offset_y_in_angstroms,
+    )
+
+    def optimization(optimization, key, initial_params: OptParams):
         lr = optimization.learning_rate
         losses = []
         cvs = []
-        cv = initial_cv
-        defocus = initial_defocus
+        defoci = []
+        wxyzs = []
+        offset_xs = []
+        offset_ys = []
+        params = initial_params
         for i in range(optimization.n_iterations):
             key, subkey = jax.random.split(key)
-            loss_val = loss_for_cv(cv, defocus, subkey)
-            losses.append(loss_val)
-            cvs.append(cv)
-            grad_val = grad_loss_for_cv(cv, defocus, subkey)
-            cv = cv - lr * grad_val
-            defocus = defocus - lr * grad_val * optimization.preconditioner.defocus_to_cv_ratio
-            if i % optimization.print_every == 0: 
-                print(f"Step {i:02d}: loss={loss_val:.6f}, grad={grad_val:.6f}, cv={cv:.3f}, defocus={defocus:.3f}")
-        return jnp.array(losses), jnp.array(cvs)
-    losses, cvs = optimization(config.optimization, key, cv, defocus)
+            # compute loss and gradients w.r.t. the packed params
+            loss_val = loss_for_params(params, subkey)
+            grads = grad_loss_for_params(params, subkey)
 
-    plt.plot(losses)
+            losses.append(loss_val)
+            cvs.append(params.cv)
+            defoci.append(params.defocus)
+            wxyzs.append(params.wxyz)
+            offset_xs.append(params.offset_x_in_angstroms)
+            offset_ys.append(params.offset_y_in_angstroms)
+
+            # apply simple SGD updates (add preconditioning/scaling as needed)
+            cv_new = params.cv - lr * grads.cv
+            defocus_new = params.defocus - lr * grads.defocus * optimization.preconditioner.defocus_to_cv_ratio
+            wxyz_new = params.wxyz - lr * grads.wxyz * optimization.preconditioner.quaternion_to_cv_ratio
+            wxyz_new = wxyz_new / (jnp.linalg.norm(wxyz_new) + 1e-12)
+            offset_x_new = params.offset_x_in_angstroms - lr * grads.offset_x_in_angstroms * optimization.preconditioner.offset_to_cv_ratio
+            offset_y_new = params.offset_y_in_angstroms - lr * grads.offset_y_in_angstroms * optimization.preconditioner.offset_to_cv_ratio
+
+            params = OptParams(
+                cv=cv_new,
+                defocus=defocus_new,
+                wxyz=wxyz_new,
+                offset_x_in_angstroms=offset_x_new,
+                offset_y_in_angstroms=offset_y_new,
+            )
+
+            if i % optimization.print_every == 0:
+                print(
+                    f"Step {i:02d}: loss={float(loss_val):.6e}, cv={float(params.cv):.6f}, defocus={float(params.defocus):.6f}, offset_x={float(params.offset_x_in_angstroms):.6f}, offset_y={float(params.offset_y_in_angstroms):.6f}"
+                )
+
+        return jnp.array(losses), jnp.array(cvs), jnp.array(defoci), jnp.array(wxyzs), jnp.array(offset_xs), jnp.array(offset_ys)
+
+    losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
+
+    plt.plot(losses, label="Loss")
+    plt.legend()
     plt.show()
-    plt.plot(cvs)
+    plt.plot(cvs, label="CV")
+    plt.legend()
     plt.show()
+    plt.plot(defoci, label="Defocus")
+    plt.legend()
+    plt.show()
+    plt.plot(wxyzs, label="WXYZ")
+    plt.legend()
+    plt.show()
+    plt.plot(offset_xs, label="Offset X")
+    plt.legend()
+    plt.show()
+    plt.plot(offset_ys, label="Offset Y")
+    plt.legend()
+    plt.show()
+    
     return None
 
 if __name__ == "__main__":
