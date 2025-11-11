@@ -1,0 +1,55 @@
+setup:
+    specimen:
+        pdb_file: "/Users/gw/repos/GOTO-SWAP/examples/1uao_assembly.pdb"
+        atomic_number_exclusion: [1]
+        
+    noise:
+        dose: 10
+        background: 100
+    intergrator:
+        grid_size: 64
+        pixel_size: 1.0
+        atom_width: 0.5
+        atom_amplitude: 1.0
+    pose:
+        rotation: [0.0, 0.0, 0.0]
+        translation: [0.0, 0.0]
+    ctf:
+        defocus_u: 1.5e4
+        defocus_v: ${setup.ctf.defocus_u}
+        astigmatism_angle: 0.0
+        cs: 2.0
+        voltage: 300.0
+        amplitude_contrast: 0.1
+    cv:
+        type: tear
+        value: 0.0
+optimization:
+    learning_rate: 1e-2
+    n_iterations: 1000
+    sliced_wasserstein:
+        n_projections: 30
+        n_pixels: 100
+
+inference_model:
+    noise:
+        dose: ${setup.noise.dose}
+        background: ${setup.noise.background}
+    initial_estimates:
+        cv:
+            type: ${setup.cv.type}
+            value: 1.0
+        rotation: [5.0, 5.0, 5.0]
+        translation: [1.0, 1.0]
+        ctf:
+            defocus_u: 1.4e5
+            defocus_v: ${inference_model.initial_estimates.ctf.defocus_u}
+            astigmatism_angle: ${setup.ctf.astigmatism_angle}
+            cs: ${setup.ctf.cs}
+            voltage: ${setup.ctf.voltage}
+            amplitude_contrast: ${setup.ctf.amplitude_contrast}
+    intergrator:
+        grid_size: ${setup.intergrator.grid_size}
+        pixel_size: ${setup.intergrator.pixel_size}
+        atom_width: ${setup.intergrator.atom_width}
+        atom_amplitude: ${setup.intergrator.atom_amplitude}
