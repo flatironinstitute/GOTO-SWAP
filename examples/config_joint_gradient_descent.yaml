@@ -6,7 +6,10 @@ setup:
     noise:
         dose: 10
         background: 100
-    intergrator:
+    # image_config:
+    #     grid_size: 64
+    #     pixel_size: 1.0
+    integrator:
         grid_size: 64
         pixel_size: 1.0
         atom_width: 0.5
@@ -25,8 +28,9 @@ setup:
         type: tear
         value: 0.0
 optimization:
-    learning_rate: 1e-2
-    n_iterations: 1000
+    learning_rate: 3e-3
+    n_iterations: 10
+    print_every: 1
     sliced_wasserstein:
         n_projections: 30
         n_pixels: 100
@@ -48,8 +52,8 @@ inference_model:
             cs: ${setup.ctf.cs}
             voltage: ${setup.ctf.voltage}
             amplitude_contrast: ${setup.ctf.amplitude_contrast}
-    intergrator:
-        grid_size: ${setup.intergrator.grid_size}
-        pixel_size: ${setup.intergrator.pixel_size}
-        atom_width: ${setup.intergrator.atom_width}
-        atom_amplitude: ${setup.intergrator.atom_amplitude}
+    integrator:
+        grid_size: ${setup.integrator.grid_size}
+        pixel_size: ${setup.integrator.pixel_size}
+        atom_width: ${setup.integrator.atom_width}
+        atom_amplitude: ${setup.integrator.atom_amplitude}

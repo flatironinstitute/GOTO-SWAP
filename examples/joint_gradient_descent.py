@@ -64,7 +64,7 @@ class CVConfig:
 class SetupConfig:
     specimen: SpecimenConfig
     noise: NoiseConfig
-    intergrator: IntegratorConfig
+    integrator: IntegratorConfig
     pose: PoseConfig
     ctf: CTFConfig
     cv: CVConfig
@@ -81,6 +81,7 @@ class OptimizationConfig:
     learning_rate: float
     n_iterations: int
     sliced_wasserstein: SlicedWassersteinConfig
+    print_every: int
 
 
 @dataclass
@@ -89,13 +90,14 @@ class InitialEstimates:
     rotation: List[float]
     translation: List[float]
     ctf: CTFConfig
-    intergrator: IntegratorConfig
+    integrator: IntegratorConfig
 
 
 @dataclass
 class InferenceModelConfig:
     noise: NoiseConfig
     initial_estimates: InitialEstimates
+    integrator: IntegratorConfig
 
 
 @dataclass
@@ -180,7 +182,7 @@ def loss_for_pose_and_cv(image_ref, volume, integrator, image_config, rotation_m
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
     print(OmegaConf.to_yaml(cfg))
-    config = OmegaConf.to_container(cfg, resolve=True)
+    config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
 
     atom_positions, atom_type = read_atoms_from_pdb('1uao_assembly.pdb', center=True, loads_properties=False)
     atom_positions = atom_positions[atom_type != 1]
@@ -216,20 +218,24 @@ def main(cfg: FullConfig):
 
     # --- Example gradient descent loop ---
     key = jax.random.key(0)
-    cv = jnp.array(0.0)
+    cv = jnp.array(config.inference_model.initial_estimates.cv.value)
 
-    # lr = 0.000003
-    lr = 0.003
-    losses = []
-    cvs = []
-    for i in range(100):
-        key, subkey = jax.random.split(key)
-        loss_val = loss_for_cv(cv, subkey)
-        losses.append(loss_val)
-        cvs.append(cv)
-        grad_val = grad_loss_for_cv(cv, subkey)
-        cv = cv - lr * grad_val
-        if i % 1 == 0: print(f"Step {i:02d}: loss={loss_val:.6f}, grad={grad_val:.6f}, cv={cv:.3f}")
+    def optimization(optimization, key, initial_cv):
+        lr = optimization.learning_rate
+        losses = []
+        cvs = []
+        cv = initial_cv
+        for i in range(optimization.n_iterations):
+            key, subkey = jax.random.split(key)
+            loss_val = loss_for_cv(cv, subkey)
+            losses.append(loss_val)
+            cvs.append(cv)
+            grad_val = grad_loss_for_cv(cv, subkey)
+            cv = cv - lr * grad_val
+            if i % optimization.print_every == 0: 
+                print(f"Step {i:02d}: loss={loss_val:.6f}, grad={grad_val:.6f}, cv={cv:.3f}")
+        return jnp.array(losses), jnp.array(cvs)
+    losses, cvs = optimization(config.optimization, key, cv)
 
     plt.plot(losses)
     plt.show()
