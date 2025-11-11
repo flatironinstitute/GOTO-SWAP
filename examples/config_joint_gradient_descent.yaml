@@ -31,7 +31,7 @@ setup:
         value: 2.5
 optimization:
     learning_rate: 3e-3
-    n_iterations: 10
+    n_iterations: 100
     print_every: 1
     sliced_wasserstein:
         n_projections: 30

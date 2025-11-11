@@ -219,13 +219,13 @@ def main(cfg: FullConfig):
         indexing='ij',
     )
     xy = jnp.stack([xm, ym], axis=-1)
-    proj_inf = apply_rotation_and_cv(volume, 
+    proj_obs = apply_rotation_and_cv(volume, 
                                      gaussian_integrator, 
                                      image_config, 
                                      rotation_matrix=jnp.eye(3), 
-                                     cv_scalar=config.inference_model.initial_estimates.cv.value) 
+                                     cv_scalar=config.setup.cv.value) 
     def loss_for_cv(cv, key):
-        return loss_for_pose_and_cv(proj_inf, volume, gaussian_integrator, image_config, 
+        return loss_for_pose_and_cv(proj_obs, volume, gaussian_integrator, image_config, 
                                     jnp.eye(3), 
                                     cv, 
                                     xy, 
