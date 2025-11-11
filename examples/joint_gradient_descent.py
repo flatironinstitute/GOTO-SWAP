@@ -141,7 +141,40 @@ def tear_cv(positions: jnp.ndarray, normal: jnp.ndarray, offset: float, tear_amo
     displaced_positions = positions + displacement
     return displaced_positions
 
+def apply_rotation_and_cv(volume, integrator, image_config, rotation_matrix, cv_scalar):
+    new_positions = tear_cv(volume.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
+    rotated_positions = new_positions @ rotation_matrix.T
+    volume_updated = eqx.tree_at(lambda v: v.positions, volume, rotated_positions)
+    proj_ref = integrator.integrate(
+            volume_updated, image_config, outputs_real_space=True
+        )
+    return proj_ref
 
+def loss_for_pose_and_cv(image_ref, volume, integrator, image_config, rotation_matrix, cv_scalar, grid, n_rotations, n_pix_samples, key):
+    image_1 = apply_rotation_and_cv(volume, integrator, image_config, rotation_matrix, cv_scalar) 
+    
+    def wasserstein_random_projections(image_1, image_2, key):
+        
+        # return jnp.linalg.norm(image - proj_inf)
+        v_weights = image_1.flatten()
+        u_weights = image_2.flatten()
+
+        thetas = jnp.linspace(0, jnp.pi, n_rotations, endpoint=False) 
+        keys = jax.random.split(key, len(thetas))
+
+        def loss_per_theta(theta, key):
+            project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
+            perm = jax.random.permutation(key, len(project))[:n_pix_samples]
+            x_ab = project[perm]
+            sort_idx = jnp.argsort(x_ab)
+            x_ab_sorted = x_ab[sort_idx]
+            a_sorted = u_weights[perm][sort_idx] + 1e-8
+            b_sorted = v_weights[perm][sort_idx] + 1e-8
+            return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
+
+        losses = jax.vmap(loss_per_theta)(thetas, keys)
+        return losses.mean()
+    return wasserstein_random_projections(image_1, image_ref, key)
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
@@ -165,51 +198,15 @@ def main(cfg: FullConfig):
         voltage_in_kilovolts=config.setup.ctf.voltage, 
         pad_options=dict(shape=(n_pix, n_pix))
     )
-
     volume = cxs.GaussianMixtureVolume(
                 atom_positions,
                 amplitudes=config.setup.integrator.atom_amplitude,
                 variances=config.setup.integrator.atom_width**2,
             )
-    integrator = cxs.GaussianMixtureProjection()
-
-    def apply_rotation_and_cv(volume, rotation_matrix, cv_scalar):
-        new_positions = tear_cv(volume.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
-        rotated_positions = new_positions @ rotation_matrix.T
-        volume_updated = eqx.tree_at(lambda v: v.positions, volume, rotated_positions)
-        proj_ref = integrator.integrate(
-                volume_updated, image_config, outputs_real_space=True
-            )
-        return proj_ref
-
-    def loss_for_pose_and_cv(image_ref, rotation_matrix, cv_scalar, grid, n_rotations, n_pix_samples, key):
-        image_1 = apply_rotation_and_cv(volume, rotation_matrix, cv_scalar) 
-        
-        def wasserstein_random_projections(image_1, image_2, key):
-            
-            # return jnp.linalg.norm(image - proj_inf)
-            v_weights = image_1.flatten()
-            u_weights = image_2.flatten()
-
-            thetas = jnp.linspace(0, jnp.pi, n_rotations, endpoint=False) 
-            keys = jax.random.split(key, len(thetas))
-
-            def loss_per_theta(theta, key):
-                project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
-                perm = jax.random.permutation(key, len(project))[:n_pix_samples]
-                x_ab = project[perm]
-                sort_idx = jnp.argsort(x_ab)
-                x_ab_sorted = x_ab[sort_idx]
-                a_sorted = u_weights[perm][sort_idx] + 1e-8
-                b_sorted = v_weights[perm][sort_idx] + 1e-8
-                return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
-
-            losses = jax.vmap(loss_per_theta)(thetas, keys)
-            return losses.mean()
-        return wasserstein_random_projections(image_1, image_ref, key)
-
-
+    gaussian_integrator = cxs.GaussianMixtureProjection()
     image_ref = apply_rotation_and_cv(volume, 
+                                     gaussian_integrator, 
+                                     image_config, 
                                      rotation_matrix=jnp.eye(3), 
                                      cv_scalar=config.setup.cv.value)
     plt.imshow(image_ref, cmap='gray')
@@ -223,14 +220,12 @@ def main(cfg: FullConfig):
     )
     xy = jnp.stack([xm, ym], axis=-1)
     proj_inf = apply_rotation_and_cv(volume, 
-                                    #  integrator, 
-                                    #  image_config, 
+                                     gaussian_integrator, 
+                                     image_config, 
                                      rotation_matrix=jnp.eye(3), 
                                      cv_scalar=config.inference_model.initial_estimates.cv.value) 
     def loss_for_cv(cv, key):
-        return loss_for_pose_and_cv(proj_inf, 
-                                    # volume, 
-                                    # integrator, image_config, 
+        return loss_for_pose_and_cv(proj_inf, volume, gaussian_integrator, image_config, 
                                     jnp.eye(3), 
                                     cv, 
                                     xy, 
