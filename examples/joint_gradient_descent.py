@@ -223,13 +223,16 @@ def main(cfg: FullConfig):
     #     image_config,
     #     pose=cxs.EulerAnglePose(),
     #     transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms)),
+    #     simulates_quantity=True,
+    #     quantity_mode='intensity'
     # )
     # image_ref = image_model.simulate()
     # image_ref = apply_rotation_and_cv(volume, 
     #                                  gaussian_integrator, 
     #                                  image_config, 
     #                                  rotation_matrix=jnp.eye(3), 
-    #                                  cv_scalar=config.setup.cv.value)
+    #                                  cv_scalar=config.setup.cv.value,
+    #                                  defocus_scalar=config.setup.ctf.defocus_in_angstroms)
 
     envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, 
                                b_factor=config.setup.envelope.b_factor)
