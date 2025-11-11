@@ -1,17 +1,19 @@
 setup:
     specimen:
-        pdb_file: "/Users/gw/repos/GOTO-SWAP/examples/1uao_assembly.pdb"
+        pdb_file: "1uao_assembly.pdb"
         atomic_number_exclusion: [1]
+        center: true
         
     noise:
         dose: 10
         background: 100
-    # image_config:
-    #     grid_size: 64
-    #     pixel_size: 1.0
+    image:
+        grid_size: 32
+        pixel_size: 0.5
+        pad_size: 64 
     integrator:
-        grid_size: 64
-        pixel_size: 1.0
+        # grid_size: 64
+        # pixel_size: 1.0
         atom_width: 0.5
         atom_amplitude: 1.0
     pose:
@@ -26,7 +28,7 @@ setup:
         amplitude_contrast: 0.1
     cv:
         type: tear
-        value: 0.0
+        value: 2.5
 optimization:
     learning_rate: 3e-3
     n_iterations: 10
@@ -42,7 +44,7 @@ inference_model:
     initial_estimates:
         cv:
             type: ${setup.cv.type}
-            value: 1.0
+            value: 0.0
         rotation: [5.0, 5.0, 5.0]
         translation: [1.0, 1.0]
         ctf:
@@ -53,7 +55,5 @@ inference_model:
             voltage: ${setup.ctf.voltage}
             amplitude_contrast: ${setup.ctf.amplitude_contrast}
     integrator:
-        grid_size: ${setup.integrator.grid_size}
-        pixel_size: ${setup.integrator.pixel_size}
         atom_width: ${setup.integrator.atom_width}
         atom_amplitude: ${setup.integrator.atom_amplitude}
