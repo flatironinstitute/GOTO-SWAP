@@ -1,41 +1,42 @@
 setup:
     specimen:
         pdb_file: "1uao_assembly.pdb"
-        atomic_number_exclusion: [1]
+        selection_string: "not element H"
         center: true
         
     noise:
         dose: 10
         background: 100
     image:
-        grid_size: 32
+        grid_size: 64
         pixel_size: 0.5
-        pad_size: 64 
+        pad_size: 128 
     integrator:
-        # grid_size: 64
-        # pixel_size: 1.0
-        atom_width: 0.5
+        atom_width: 0.25
         atom_amplitude: 1.0
     pose:
         rotation: [0.0, 0.0, 0.0]
         translation: [0.0, 0.0]
     ctf:
-        defocus_u: 1.5e4
-        defocus_v: ${setup.ctf.defocus_u}
-        astigmatism_angle: 0.0
-        cs: 2.0
+        defocus_in_angstroms: 2000.0
         voltage: 300.0
-        amplitude_contrast: 0.1
+    envelope:
+        amplitude: 1.0
+        b_factor: 10.0
     cv:
         type: tear
-        value: 2.5
+        value: 0.0
 optimization:
-    learning_rate: 3e-3
-    n_iterations: 100
+    learning_rate: 0.01
+    n_iterations: 1000
     print_every: 1
     sliced_wasserstein:
         n_projections: 30
-        n_pixels: 100
+        n_pixels: 300
+        normalize_safely_epsilon: 1e-8
+    preconditioner:
+      defocus_to_cv_ratio: 100000.0
+        
 
 inference_model:
     noise:
@@ -48,12 +49,8 @@ inference_model:
         rotation: [5.0, 5.0, 5.0]
         translation: [1.0, 1.0]
         ctf:
-            defocus_u: 1.4e5
-            defocus_v: ${inference_model.initial_estimates.ctf.defocus_u}
-            astigmatism_angle: ${setup.ctf.astigmatism_angle}
-            cs: ${setup.ctf.cs}
+            defocus_in_angstroms: 1900.0
             voltage: ${setup.ctf.voltage}
-            amplitude_contrast: ${setup.ctf.amplitude_contrast}
     integrator:
         atom_width: ${setup.integrator.atom_width}
         atom_amplitude: ${setup.integrator.atom_amplitude}
