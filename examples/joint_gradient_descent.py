@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import equinox as eqx
 import matplotlib.pyplot as plt
 from time import time
+import os
 
 
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
@@ -429,9 +430,7 @@ def main(cfg: FullConfig):
     losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
     end = time()
     print(f"Optimization took {end - start:.2f} seconds.")
-    # save in hydra output directory
 
-    import os
     jnp.savez(os.path.join(run_dir, "joint_gradient_descent_traces.npz"),
              losses=losses,
              cvs=cvs,
