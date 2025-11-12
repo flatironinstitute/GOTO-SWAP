@@ -185,50 +185,51 @@ def tear_cv(positions: jnp.ndarray, normal: jnp.ndarray, offset: float, tear_amo
     return displaced_positions
 
 
-def apply_rotation_and_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms):
+def apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms):
     new_positions = tear_cv(image_model.volume_parametrization.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
     image_model_updated = eqx.tree_at(lambda im: im.volume_parametrization.positions, image_model, new_positions)
     image_model_updated = eqx.tree_at(lambda im: im.pose.offset_in_angstroms, image_model_updated, jnp.array([offset_x_in_angstroms, offset_y_in_angstroms]))
     image_model_updated = eqx.tree_at(lambda im: im.pose.wxyz, image_model_updated, wxyz)
     image_model_updated = eqx.tree_at(lambda im: im.scattering_theory.transfer_theory.ctf.defocus_in_angstroms, image_model_updated, defocus_scalar)
-    image_ref = image_model_updated.simulate()
-    return image_ref
+    return image_model_updated
 
+
+def sw_sorted_jax_differentiable(image_1, image_2, grid, n_projections, n_pixels, normalize_safely_epsilon, key):
+    
+    v_weights = image_1.flatten()
+    u_weights = image_2.flatten()
+
+    thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False) 
+    keys = jax.random.split(key, len(thetas))
+
+    def loss_per_theta(theta, key):
+        project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
+        perm = jax.random.permutation(key, len(project))[:n_pixels]
+        x_ab = project[perm]
+        sort_idx = jnp.argsort(x_ab)
+        x_ab_sorted = x_ab[sort_idx]
+        a_sorted = u_weights[perm][sort_idx] + normalize_safely_epsilon
+        b_sorted = v_weights[perm][sort_idx] + normalize_safely_epsilon
+        return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
+
+    losses = jax.vmap(loss_per_theta)(thetas, keys)
+    return losses.mean()
+    
 
 def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, key):
-    image_1 = apply_rotation_and_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms) 
+    image_1 = apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms).simulate()
     
     def l2_loss(image_1, image_2):
         return jnp.linalg.norm(image_1 - image_2)
 
-    def wasserstein_random_projections(image_1, image_2, key):
-        
-        v_weights = image_1.flatten()
-        u_weights = image_2.flatten()
 
-        thetas = jnp.linspace(0, jnp.pi, sliced_wasserstein.n_projections, endpoint=False) 
-        keys = jax.random.split(key, len(thetas))
-
-        def loss_per_theta(theta, key):
-            project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
-            perm = jax.random.permutation(key, len(project))[:sliced_wasserstein.n_pixels]
-            x_ab = project[perm]
-            sort_idx = jnp.argsort(x_ab)
-            x_ab_sorted = x_ab[sort_idx]
-            a_sorted = u_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
-            b_sorted = v_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
-            return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
-
-        losses = jax.vmap(loss_per_theta)(thetas, keys)
-        return losses.mean()
     if use_this_objective == 'sw':
-        return wasserstein_random_projections(image_1, image_ref, key)
+        return sw_sorted_jax_differentiable(image_1, image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key)
     elif use_this_objective == 'l2':
         return l2_loss(image_1, image_ref)
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
-
 
     logger = logging.getLogger(__name__)
     logger.info(OmegaConf.to_yaml(cfg))
@@ -280,7 +281,8 @@ def main(cfg: FullConfig):
 
     plt.imshow(image_ref, cmap='gray')
     plt.savefig(os.path.join(run_dir, "observed_image.png"))
-    # plt.show()
+    # close / clear
+    plt.clf()
 
     
     xm, ym = jnp.meshgrid(
@@ -289,14 +291,14 @@ def main(cfg: FullConfig):
         indexing='ij',
     )
     grid = jnp.stack([xm, ym], axis=-1)
-    proj_obs = apply_rotation_and_cv(
+    proj_obs = apply_all_cv(
         image_model=image_model,
         wxyz=pose.wxyz,
         offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms,
         offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms,
         cv_scalar=config.setup.cv.value,
         defocus_scalar=config.setup.ctf.defocus_in_angstroms,
-    )
+    ).simulate()
 
     @dataclass
     class OptParams(eqx.Module):
@@ -398,7 +400,7 @@ def main(cfg: FullConfig):
             )
 
             if i % optimization_cfg.print_every == 0:
-                print(
+                logger.info(
                     f"Step {i:03d}: loss={loss_val:.6e}, cv={float(params.cv):.6f}, defocus={float(params.defocus):.6f}, "
                     f"offset_x={float(params.offset_x_in_angstroms):.6f}, offset_y={float(params.offset_y_in_angstroms):.6f}, "
                     f"wxyz=({float(params.wxyz[0]):.6f}, {float(params.wxyz[1]):.6f}, {float(params.wxyz[2]):.6f}, {float(params.wxyz[3]):.6f}), "
@@ -422,6 +424,7 @@ def main(cfg: FullConfig):
     losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
     end = time()
     logger.info(f"Optimization took {end - start:.2f} seconds.")
+    logger.info(f'Output in {run_dir}')
 
     jnp.savez(os.path.join(run_dir, "joint_gradient_descent_traces.npz"),
              losses=losses,
@@ -435,33 +438,33 @@ def main(cfg: FullConfig):
     plt.plot(losses, label="Loss")
     plt.legend()
     plt.savefig(os.path.join(run_dir, "loss_curve.png"))
-    # plt.show()
+    plt.clf()
     plt.plot(cvs, label="CV")
     plt.axhline(y=config.setup.cv.value, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "cv_curve.png"))
-    # plt.show()
+    plt.clf()
     plt.plot(defoci, label="Defocus")
     plt.axhline(y=config.setup.ctf.defocus_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "defocus_curve.png"))
-    # plt.show()
+    plt.clf()
     plt.plot(wxyzs, label="WXYZ")
     for quaternion_component in setup_pose_wxyz:
         plt.axhline(y=quaternion_component, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "wxyz_curve.png"))
-    # plt.show()
+    plt.clf()
     plt.plot(offset_xs, label="Offset X")
     plt.axhline(y=config.setup.pose.translation.offset_x_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "offset_x_curve.png"))
-    # plt.show()
+    plt.clf()
     plt.plot(offset_ys, label="Offset Y")
     plt.axhline(y=config.setup.pose.translation.offset_y_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "offset_y_curve.png"))
-    # plt.show()
+    plt.clf()
     
     return None
 

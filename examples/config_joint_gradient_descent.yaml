@@ -3,7 +3,6 @@ setup:
         pdb_file: "1uao_assembly.pdb"
         selection_string: "not element H"
         center: true
-        
     noise:
         dose: 10
         background: 100
@@ -55,8 +54,8 @@ optimization:
         offset: 100.0
     optimize_these_variables:
       cv: true
-      defocus: true
-      rotation: true
+      defocus: false
+      rotation: false
       translation: true
 
 
@@ -67,17 +66,17 @@ inference_model:
     initial_estimates:
         cv:
             type: ${setup.cv.type}
-            value: 2.0 #${setup.cv.value}
+            value: 1.25 #${setup.cv.value}
         pose:
             euler_angles_deg:
-              phi_angle: 7.5 #${setup.pose.euler_angles_deg.phi_angle}
-              theta_angle: 7.5 #${setup.pose.euler_angles_deg.theta_angle}
-              psi_angle: 7.5 #${setup.pose.euler_angles_deg.psi_angle}
+              phi_angle: 0 #${setup.pose.euler_angles_deg.phi_angle}
+              theta_angle: 0 #${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: 0 #${setup.pose.euler_angles_deg.psi_angle}
             translation:
-              offset_x_in_angstroms: 2.0 #${setup.pose.translation.offset_x_in_angstroms}
-              offset_y_in_angstroms: 2.0 #${setup.pose.translation.offset_y_in_angstroms}
+              offset_x_in_angstroms: ${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: ${setup.pose.translation.offset_y_in_angstroms}
         ctf:
-            defocus_in_angstroms: 2500.0 #${setup.ctf.defocus_in_angstroms}
+            defocus_in_angstroms: 2000.0 #${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}
     integrator:
         atom_width: ${setup.integrator.atom_width}
