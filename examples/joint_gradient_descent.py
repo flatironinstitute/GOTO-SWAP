@@ -1,19 +1,18 @@
 import hydra
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 from dataclasses import dataclass
-from dataclasses import field
-from typing import List
 import jax
 import jax.numpy as jnp
 import equinox as eqx
 import matplotlib.pyplot as plt
+from time import time
+
 
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
-from cryojax.ndimage.operators import FourierGaussian
-from cryojax.simulator import WeakPhaseScatteringTheory
-from cryojax.ndimage import irfftn
+
 
 @dataclass
 class SpecimenConfig:
@@ -118,12 +117,18 @@ class OptimizeTheseVariablesConfig:
 
 @dataclass
 class OptimizationConfig:
+    use_this_objective: str
     learning_rate: float
     n_iterations: int
     sliced_wasserstein: SlicedWassersteinConfig
     print_every: int
     preconditioner: PreconditionerConfig
     optimize_these_variables: OptimizeTheseVariablesConfig
+
+    # post init for use this objective sw or l2
+    def __post_init__(self):
+        if self.use_this_objective not in ['sliced_wasserstein', 'l2']:
+            raise ValueError("use_this_objective must be either 'sliced_wasserstein' or 'l2'")
 
 
 @dataclass
@@ -186,37 +191,47 @@ def apply_rotation_and_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x
     return image_ref
 
 
-def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, grid, sliced_wasserstein, key):
+def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, key):
     image_1 = apply_rotation_and_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms) 
     
+    def l2_loss(image_1, image_2):
+        return jnp.linalg.norm(image_1 - image_2)
 
     def wasserstein_random_projections(image_1, image_2, key):
-        return jnp.linalg.norm(image_1 - image_2)
         
-        # v_weights = image_1.flatten()
-        # u_weights = image_2.flatten()
+        v_weights = image_1.flatten()
+        u_weights = image_2.flatten()
 
-        # thetas = jnp.linspace(0, jnp.pi, sliced_wasserstein.n_projections, endpoint=False) 
-        # keys = jax.random.split(key, len(thetas))
+        thetas = jnp.linspace(0, jnp.pi, sliced_wasserstein.n_projections, endpoint=False) 
+        keys = jax.random.split(key, len(thetas))
 
-        # def loss_per_theta(theta, key):
-        #     project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
-        #     perm = jax.random.permutation(key, len(project))[:sliced_wasserstein.n_pixels]
-        #     x_ab = project[perm]
-        #     sort_idx = jnp.argsort(x_ab)
-        #     x_ab_sorted = x_ab[sort_idx]
-        #     a_sorted = u_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
-        #     b_sorted = v_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
-        #     return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
+        def loss_per_theta(theta, key):
+            project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
+            perm = jax.random.permutation(key, len(project))[:sliced_wasserstein.n_pixels]
+            x_ab = project[perm]
+            sort_idx = jnp.argsort(x_ab)
+            x_ab_sorted = x_ab[sort_idx]
+            a_sorted = u_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
+            b_sorted = v_weights[perm][sort_idx] + sliced_wasserstein.normalize_safely_epsilon
+            return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
 
-        # losses = jax.vmap(loss_per_theta)(thetas, keys)
-        # return losses.mean()
-    return wasserstein_random_projections(image_1, image_ref, key)
+        losses = jax.vmap(loss_per_theta)(thetas, keys)
+        return losses.mean()
+    if use_this_objective == 'sw':
+        return wasserstein_random_projections(image_1, image_ref, key)
+    elif use_this_objective == 'l2':
+        return l2_loss(image_1, image_ref)
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
+
+
+
     print(OmegaConf.to_yaml(cfg))
     config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
+    
+    run_dir = HydraConfig.get().run.dir
+    print(f"Saving traces to {run_dir}")
 
     def setup_specimen(specimen: SpecimenConfig):
         atom_positions, _ = read_atoms_from_pdb(
@@ -240,14 +255,24 @@ def main(cfg: FullConfig):
                 amplitudes=config.setup.integrator.atom_amplitude,
                 variances=config.setup.integrator.atom_width**2,
             )
-    pose = cxs.QuaternionPose(wxyz=cxs.EulerAnglePose(
+    setup_pose_wxyz = cxs.EulerAnglePose(
         phi_angle=config.setup.pose.euler_angles_deg.phi_angle,
         theta_angle=config.setup.pose.euler_angles_deg.theta_angle,
         psi_angle=config.setup.pose.euler_angles_deg.psi_angle,
-        ).rotation.wxyz, 
+        ).rotation.wxyz
+    pose = cxs.QuaternionPose(wxyz=setup_pose_wxyz, 
         offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms, 
         offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms
         )
+    image_model = cxs.make_image_model(
+        volume,
+        image_config,
+        pose=pose,
+        transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms)),
+        simulates_quantity=True,
+        quantity_mode='intensity'
+    )
+    image_ref = image_model.simulate()
     image_model = cxs.make_image_model(
         volume,
         image_config,
@@ -277,9 +302,6 @@ def main(cfg: FullConfig):
         defocus_scalar=config.setup.ctf.defocus_in_angstroms,
     )
 
-    # Pack differentiable variables into a dataclass so equinox can return
-    # a matching gradient structure (vectorized gradient).
-    # Make OptParams an Equinox pytree (dataclass subclassing eqx.Module)
     @dataclass
     class OptParams(eqx.Module):
         cv: jnp.ndarray
@@ -297,6 +319,7 @@ def main(cfg: FullConfig):
             wxyz=params.wxyz,
             offset_x_in_angstroms=params.offset_x_in_angstroms,
             offset_y_in_angstroms=params.offset_y_in_angstroms,
+            use_this_objective=config.optimization.use_this_objective,
             grid=grid,
             sliced_wasserstein=config.optimization.sliced_wasserstein,
             key=key,
@@ -330,7 +353,6 @@ def main(cfg: FullConfig):
         lr = optimization_cfg.learning_rate
         n_iters = optimization_cfg.n_iterations
 
-        # preallocate lists (you can store as python lists and convert to jnp at end)
         losses = []
         cvs = []
         defoci = []
@@ -342,7 +364,6 @@ def main(cfg: FullConfig):
 
         for i in range(n_iters):
             key, subkey = jax.random.split(key)
-            # compute value and gradients in one shot (JITed)
             loss_val, grads = value_and_grad_for_params_jit(params, subkey)
 
             # record traces
@@ -404,24 +425,44 @@ def main(cfg: FullConfig):
             jnp.array(offset_ys),
         )
 
+    start = time()
     losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
+    end = time()
+    print(f"Optimization took {end - start:.2f} seconds.")
+    # save in hydra output directory
+
+    import os
+    jnp.savez(os.path.join(run_dir, "joint_gradient_descent_traces.npz"),
+             losses=losses,
+             cvs=cvs,
+             defoci=defoci,
+             wxyzs=wxyzs,
+             offset_xs=offset_xs,
+             offset_ys=offset_ys,
+    )
 
     plt.plot(losses, label="Loss")
     plt.legend()
     plt.show()
     plt.plot(cvs, label="CV")
+    plt.axhline(y=config.setup.cv.value, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.show()
     plt.plot(defoci, label="Defocus")
+    plt.axhline(y=config.setup.ctf.defocus_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.show()
     plt.plot(wxyzs, label="WXYZ")
+    for quaternion_component in setup_pose_wxyz:
+        plt.axhline(y=quaternion_component, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.show()
     plt.plot(offset_xs, label="Offset X")
+    plt.axhline(y=config.setup.pose.translation.offset_x_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.show()
     plt.plot(offset_ys, label="Offset Y")
+    plt.axhline(y=config.setup.pose.translation.offset_y_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.show()
     
