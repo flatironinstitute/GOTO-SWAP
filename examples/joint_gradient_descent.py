@@ -277,17 +277,9 @@ def main(cfg: FullConfig):
         quantity_mode='intensity'
     )
     image_ref = image_model.simulate()
-    image_model = cxs.make_image_model(
-        volume,
-        image_config,
-        pose=pose,
-        transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms)),
-        simulates_quantity=True,
-        quantity_mode='intensity'
-    )
-    image_ref = image_model.simulate()
 
     plt.imshow(image_ref, cmap='gray')
+    plt.savefig(os.path.join(run_dir, "observed_image.png"))
     plt.show()
 
     
@@ -343,7 +335,6 @@ def main(cfg: FullConfig):
     offset_x_in_angstroms = jnp.array(config.inference_model.initial_estimates.pose.translation.offset_x_in_angstroms)
     offset_y_in_angstroms = jnp.array(config.inference_model.initial_estimates.pose.translation.offset_y_in_angstroms)
 
-    # initial params packed as a dataclass
     params0 = OptParams(
         cv=cv,
         defocus=defocus,
@@ -352,7 +343,6 @@ def main(cfg: FullConfig):
         offset_y_in_angstroms=offset_y_in_angstroms,
     )
 
-    # --- Optimization routine ---
     def optimization(optimization_cfg, key, initial_params: OptParams):
         lr = optimization_cfg.learning_rate
         n_iters = optimization_cfg.n_iterations
@@ -371,7 +361,6 @@ def main(cfg: FullConfig):
             key, subkey = jax.random.split(key)
             loss_val, grads = value_and_grad_for_params_jit(params, subkey)
 
-            # record traces
             losses.append(float(loss_val))
             cvs.append(float(params.cv))
             defoci.append(float(params.defocus))
@@ -420,11 +409,10 @@ def main(cfg: FullConfig):
                     f"grad_wxyz=({float(grads.wxyz[0]):.6f}, {float(grads.wxyz[1]):.6f}, {float(grads.wxyz[2]):.6f}, {float(grads.wxyz[3]):.6f})"
                 )
 
-        # convert list traces into jnp arrays when desired
         return (
             jnp.array(losses),
             jnp.array(cvs),
-            jnp.array(defoci),  # keep old naming
+            jnp.array(defoci),  
             jnp.stack(wxyzs),
             jnp.array(offset_xs),
             jnp.array(offset_ys),
