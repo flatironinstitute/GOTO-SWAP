@@ -8,7 +8,7 @@ import equinox as eqx
 import matplotlib.pyplot as plt
 from time import time
 import os
-
+import logging
 
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
 from cryojax.io import read_atoms_from_pdb
@@ -230,12 +230,12 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
 def main(cfg: FullConfig):
 
 
-
-    print(OmegaConf.to_yaml(cfg))
+    logger = logging.getLogger(__name__)
+    logger.info(OmegaConf.to_yaml(cfg))
     config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
     
     run_dir = HydraConfig.get().run.dir
-    print(f"Saving traces to {run_dir}")
+    logger.info(f"Saving traces to {run_dir}")
 
     def setup_specimen(specimen: SpecimenConfig):
         atom_positions, _ = read_atoms_from_pdb(
@@ -280,7 +280,7 @@ def main(cfg: FullConfig):
 
     plt.imshow(image_ref, cmap='gray')
     plt.savefig(os.path.join(run_dir, "observed_image.png"))
-    plt.show()
+    # plt.show()
 
     
     xm, ym = jnp.meshgrid(
@@ -421,7 +421,7 @@ def main(cfg: FullConfig):
     start = time()
     losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
     end = time()
-    print(f"Optimization took {end - start:.2f} seconds.")
+    logger.info(f"Optimization took {end - start:.2f} seconds.")
 
     jnp.savez(os.path.join(run_dir, "joint_gradient_descent_traces.npz"),
              losses=losses,
@@ -435,33 +435,33 @@ def main(cfg: FullConfig):
     plt.plot(losses, label="Loss")
     plt.legend()
     plt.savefig(os.path.join(run_dir, "loss_curve.png"))
-    plt.show()
+    # plt.show()
     plt.plot(cvs, label="CV")
     plt.axhline(y=config.setup.cv.value, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "cv_curve.png"))
-    plt.show()
+    # plt.show()
     plt.plot(defoci, label="Defocus")
     plt.axhline(y=config.setup.ctf.defocus_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "defocus_curve.png"))
-    plt.show()
+    # plt.show()
     plt.plot(wxyzs, label="WXYZ")
     for quaternion_component in setup_pose_wxyz:
         plt.axhline(y=quaternion_component, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "wxyz_curve.png"))
-    plt.show()
+    # plt.show()
     plt.plot(offset_xs, label="Offset X")
     plt.axhline(y=config.setup.pose.translation.offset_x_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "offset_x_curve.png"))
-    plt.show()
+    # plt.show()
     plt.plot(offset_ys, label="Offset Y")
     plt.axhline(y=config.setup.pose.translation.offset_y_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "offset_y_curve.png"))
-    plt.show()
+    # plt.show()
     
     return None
 
