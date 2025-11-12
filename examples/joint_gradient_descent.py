@@ -13,6 +13,7 @@ import logging
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
+from cryojax.ndimage.operators import FourierGaussian
 
 
 @dataclass
@@ -222,11 +223,11 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
     def l2_loss(image_1, image_2):
         return jnp.linalg.norm(image_1 - image_2)
 
-
     if use_this_objective == 'sw':
         return sw_sorted_jax_differentiable(image_1, image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key)
     elif use_this_objective == 'l2':
         return l2_loss(image_1, image_ref)
+
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
@@ -258,7 +259,7 @@ def main(cfg: FullConfig):
     volume = cxs.GaussianMixtureVolume(
                 atom_positions,
                 amplitudes=config.setup.integrator.atom_amplitude,
-                variances=config.setup.integrator.atom_width**2,
+                variances=config.setup.integrator.atom_width,
             )
     setup_pose_wxyz = cxs.EulerAnglePose(
         phi_angle=config.setup.pose.euler_angles_deg.phi_angle,
@@ -269,14 +270,19 @@ def main(cfg: FullConfig):
         offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms, 
         offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms
         )
+
     image_model = cxs.make_image_model(
         volume,
         image_config,
         pose=pose,
-        transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms)),
+        transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
+                                                   envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, b_factor=config.setup.envelope.b_factor),
+                                                   ),
         simulates_quantity=True,
         quantity_mode='intensity'
     )
+    logger.info(f"image_model: {image_model}")
+    jnp.savez(os.path.join(run_dir, "initial_image_model.npz"), image_model=image_model)
     image_ref = image_model.simulate()
 
     plt.imshow(image_ref, cmap='gray')
