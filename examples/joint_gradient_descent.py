@@ -123,14 +123,17 @@ class OptimizationConfig:
     n_iterations: int
     sliced_wasserstein: SlicedWassersteinConfig
     print_every: int
-    preconditioner: PreconditionerConfig
+    preconditioner: dict[str,PreconditionerConfig]
     optimize_these_variables: OptimizeTheseVariablesConfig
 
     # post init for use this objective sw or l2
     def __post_init__(self):
         if self.use_this_objective not in ['sliced_wasserstein', 'l2']:
             raise ValueError("use_this_objective must be either 'sliced_wasserstein' or 'l2'")
-
+        if self.preconditioner:
+            for key in self.preconditioner:
+                if key not in ['sliced_wasserstein', 'l2']:
+                    raise ValueError("preconditioner keys must be either 'sliced_wasserstein' or 'l2'")
 
 @dataclass
 class InitialEstimates:
@@ -362,6 +365,7 @@ def main(cfg: FullConfig):
         offset_ys = []
 
         params = initial_params
+        preconditioner = optimization_cfg.preconditioner[optimization_cfg.use_this_objective]
 
         for i in range(n_iters):
             key, subkey = jax.random.split(key)
@@ -377,22 +381,22 @@ def main(cfg: FullConfig):
 
             # SGD-like update (apply preconditioning factors from config)
             if optimization_cfg.optimize_these_variables.cv:
-                cv_new = params.cv - lr * grads.cv * optimization_cfg.preconditioner.cv
+                cv_new = params.cv - lr * grads.cv * preconditioner.cv
             else:
                 cv_new = params.cv
             if optimization_cfg.optimize_these_variables.defocus:
-                defocus_new = params.defocus - lr * grads.defocus * optimization_cfg.preconditioner.defocus
+                defocus_new = params.defocus - lr * grads.defocus * preconditioner.defocus
             else:
                 defocus_new = params.defocus
             if optimization_cfg.optimize_these_variables.rotation:
                 quaternion_normalize_safely_epsilon = 1e-12
-                wxyz_new = params.wxyz - lr * grads.wxyz * optimization_cfg.preconditioner.quaternion + quaternion_normalize_safely_epsilon
+                wxyz_new = params.wxyz - lr * grads.wxyz * preconditioner.quaternion + quaternion_normalize_safely_epsilon
                 wxyz_new = wxyz_new / (jnp.linalg.norm(wxyz_new) )
             else:
                 wxyz_new = params.wxyz
             if optimization_cfg.optimize_these_variables.translation:
-                offset_x_new = params.offset_x_in_angstroms - lr * grads.offset_x_in_angstroms * optimization_cfg.preconditioner.offset
-                offset_y_new = params.offset_y_in_angstroms - lr * grads.offset_y_in_angstroms * optimization_cfg.preconditioner.offset
+                offset_x_new = params.offset_x_in_angstroms - lr * grads.offset_x_in_angstroms * preconditioner.offset
+                offset_y_new = params.offset_y_in_angstroms - lr * grads.offset_y_in_angstroms * preconditioner.offset
             else:
                 offset_x_new = params.offset_x_in_angstroms
                 offset_y_new = params.offset_y_in_angstroms
@@ -442,27 +446,33 @@ def main(cfg: FullConfig):
 
     plt.plot(losses, label="Loss")
     plt.legend()
+    plt.savefig(os.path.join(run_dir, "loss_curve.png"))
     plt.show()
     plt.plot(cvs, label="CV")
     plt.axhline(y=config.setup.cv.value, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
+    plt.savefig(os.path.join(run_dir, "cv_curve.png"))
     plt.show()
     plt.plot(defoci, label="Defocus")
     plt.axhline(y=config.setup.ctf.defocus_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
+    plt.savefig(os.path.join(run_dir, "defocus_curve.png"))
     plt.show()
     plt.plot(wxyzs, label="WXYZ")
     for quaternion_component in setup_pose_wxyz:
         plt.axhline(y=quaternion_component, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
+    plt.savefig(os.path.join(run_dir, "wxyz_curve.png"))
     plt.show()
     plt.plot(offset_xs, label="Offset X")
     plt.axhline(y=config.setup.pose.translation.offset_x_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
+    plt.savefig(os.path.join(run_dir, "offset_x_curve.png"))
     plt.show()
     plt.plot(offset_ys, label="Offset Y")
     plt.axhline(y=config.setup.pose.translation.offset_y_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
+    plt.savefig(os.path.join(run_dir, "offset_y_curve.png"))
     plt.show()
     
     return None

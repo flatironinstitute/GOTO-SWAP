@@ -34,24 +34,25 @@ setup:
 
 
 optimization:
-    learning_rate: 0.01
-    n_iterations: 100000
+    learning_rate: 0.3
+    n_iterations: 300
     print_every: 1
-    use_this_objective: l2
+    use_this_objective: sw
     sliced_wasserstein:
-        n_projections: 30
-        n_pixels: 300
+        n_projections: 100
+        n_pixels: 1000
         normalize_safely_epsilon: 1e-8
-    preconditioner: # mse with lr 0.01 and n_iterations 10k
-      cv: 0.1
-      defocus: 1000.0
-      quaternion: 0.0001
-      offset: 0.1
-    # preconditioner: # sw with lr 0.01 and n_iterations 100
-    #   cv: 30.0
-    #   defocus: 300000.0 # maybe higher?
-    #   quaternion: 0.3
-    #   offset: 100.0
+    preconditioner: 
+      l2: # mse with lr 0.01 and n_iterations 10k
+        cv: 0.1
+        defocus: 1000.0
+        quaternion: 0.0001
+        offset: 0.1
+      sw: # sw with lr 0.01 and n_iterations 100 np 30, np 300
+        cv: 30.0
+        defocus: 300000.0 # maybe higher?
+        quaternion: 0.3
+        offset: 100.0
     optimize_these_variables:
       cv: true
       defocus: true
