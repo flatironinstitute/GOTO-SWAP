@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from time import time
 import os
 import logging
-from typing import Any, Union
+from typing import Any, Union, Tuple
 
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
 from cryojax.io import read_atoms_from_pdb
@@ -26,9 +26,9 @@ from joint_gradient_descent import (
 
 @dataclass
 class LandscapeConfig:
-    n_trials_per_point: int 
-    n_landscape_values: int
-    landscape_variables: dict[str, Any] #dict[str, dict[str, Union[float, list[float]]]]
+    # n_trials_per_point: int 
+    # n_landscape_values: int
+    landscape_variables: dict[str, dict[str, Any]] #dict[str, dict[str, Union[float, list[float]]]]
     n_trials: int
 
     def __post_init__(self):
@@ -42,11 +42,12 @@ class LandscapeConfig:
 class SlicedWassersteinConfig:
     n_projections: int
     n_pixels: int
+    random_seed: int
     normalize_safely_epsilon: float = 1e-12
 
 @dataclass
 class ObjectiveConfig:
-    sliced_wasserstein_list: list[SlicedWassersteinConfig]
+    sliced_wasserstein: SlicedWassersteinConfig
 
 
 @dataclass
@@ -67,6 +68,7 @@ def main(cfg: FullConfig):
     os.makedirs(os.path.join(run_dir, "data"), exist_ok=True)
 
     logger.info(f"Saving traces to {run_dir}")
+    logger.info(f"Config:\n{OmegaConf.to_yaml(config)}")
 
     def setup_specimen(specimen: SpecimenConfig):
         atom_positions, _ = read_atoms_from_pdb(
@@ -147,11 +149,12 @@ def main(cfg: FullConfig):
     grid = jnp.stack([xm, ym], axis=-1)
 
 
-    sliced_wasserstein = config.objective.sliced_wasserstein_list
-    for idx, sliced_wasserstein in enumerate(sliced_wasserstein):
+    sliced_wasserstein = config.objective.sliced_wasserstein
+    if True:
+    # for idx, sliced_wasserstein in enumerate(sliced_wasserstein):
         print(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
         n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
-        key = jax.random.PRNGKey(idx)
+        # key = jax.random.PRNGKey(idx)
         
 
         cv_dict = {
@@ -239,7 +242,7 @@ def main(cfg: FullConfig):
             defocus = config.setup.ctf.defocus_in_angstroms
             offset_x = config.setup.pose.translation.offset_x_in_angstroms
             offset_y = config.setup.pose.translation.offset_y_in_angstroms
-            cv = config.setup.cv.value
+            cv_scalar = config.setup.cv.value
             if 'rotation' == key1:
                 wxyz = cv
             elif 'defocus' == key1:
@@ -263,7 +266,7 @@ def main(cfg: FullConfig):
             new_image_model = apply_all_cv(
                 image_model,
                 wxyz=wxyz,
-                cv_scalar=cv,
+                cv_scalar=cv_scalar,
                 defocus_scalar=defocus,
                 offset_x_in_angstroms=offset_x,
                 offset_y_in_angstroms=offset_y,
@@ -278,9 +281,6 @@ def main(cfg: FullConfig):
                 key,
             )
 
-        # make a full grid of (cv, other) pairs
-        cv_grid = jnp.hstack([cv_grid, cv_grid])
-
         vmap_size = len(cv_grid) * len(other_grid)
         vmap_shape = (len(cv_grid), len(other_grid))
 
@@ -293,7 +293,7 @@ def main(cfg: FullConfig):
         eval_sw_vmapped_jit = jax.jit(eval_sw_vmapped)
 
         # multiple trials
-        key_main = jax.random.PRNGKey(42)
+        key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
         rep_keys = jax.random.split(key_main, config.landscape.n_trials)
 
         def run_trial(k):
