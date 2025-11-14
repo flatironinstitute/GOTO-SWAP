@@ -4,10 +4,10 @@ setup:
         selection_string: "not element H"
         center: true
     noise:
-        dose: 10
-        background: 100
+        dose: 500
+        background: 10
     image:
-        grid_size: 64
+        grid_size: 128
         pixel_size: 0.5
         pad_size: 128 
     integrator:
@@ -29,17 +29,17 @@ setup:
         b_factor: 10.0
     cv:
         type: tear
-        value: 0.0
+        value: 15.0
 
 
 optimization:
-    learning_rate: 0.01
-    n_iterations: 300
+    learning_rate: 1.0
+    n_iterations: 1000
     print_every: 1
     use_this_objective: sw
     sliced_wasserstein:
-        n_projections: 30
-        n_pixels: 300
+        n_projections: 100
+        n_pixels: 1000
         normalize_safely_epsilon: 1e-8
     preconditioner: 
       l2: # mse with lr 0.01 and n_iterations 10k
@@ -48,9 +48,9 @@ optimization:
         quaternion: 0.0001
         offset: 0.1
       sw: # sw with lr 0.01 and n_iterations 100 np 30, np 300
-        cv: 30.0
-        defocus: 300000.0 # maybe higher?
-        quaternion: 0.3
+        cv: 300.0
+        defocus: 1000000.0 # maybe higher?
+        quaternion: 0.1
         offset: 100.0
     optimize_these_variables:
       cv: true
@@ -66,17 +66,17 @@ inference_model:
     initial_estimates:
         cv:
             type: ${setup.cv.type}
-            value: ${setup.cv.value}
+            value: 11 # ${setup.cv.value}
         pose:
             euler_angles_deg:
-              phi_angle: ${setup.pose.euler_angles_deg.phi_angle}
-              theta_angle: ${setup.pose.euler_angles_deg.theta_angle}
-              psi_angle: ${setup.pose.euler_angles_deg.psi_angle}
+              phi_angle: 5 #${setup.pose.euler_angles_deg.phi_angle}
+              theta_angle: 5 # ${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: 5 # ${setup.pose.euler_angles_deg.psi_angle}
             translation:
-              offset_x_in_angstroms: ${setup.pose.translation.offset_x_in_angstroms}
-              offset_y_in_angstroms: ${setup.pose.translation.offset_y_in_angstroms}
+              offset_x_in_angstroms: 2 #${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: 2 #${setup.pose.translation.offset_y_in_angstroms}
         ctf:
-            defocus_in_angstroms: ${setup.ctf.defocus_in_angstroms}
+            defocus_in_angstroms: 2300 #${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}
     integrator:
         atom_width: ${setup.integrator.atom_width}

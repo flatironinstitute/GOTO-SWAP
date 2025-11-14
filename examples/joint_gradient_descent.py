@@ -217,26 +217,34 @@ def sw_sorted_jax_differentiable(image_1, image_2, grid, n_projections, n_pixels
     return losses.mean()
     
 
-def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, key):
+def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, noise, key):
     image_1 = apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms).simulate()
     
     def l2_loss(image_1, image_2):
         return jnp.linalg.norm(image_1 - image_2)
 
     if use_this_objective == 'sw':
-        return sw_sorted_jax_differentiable(image_1, image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key)
+        return sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key)
     elif use_this_objective == 'l2':
-        return l2_loss(image_1, image_ref)
+        return l2_loss(noise.dose*(image_1 + noise.background)/noise.dose, image_ref/noise.dose) # normalize by dose to not affect learning rate
+
+
+def unnormalized_quaternion_to_geodesic(wxyz_raw):
+    wxyz_raw /= jnp.linalg.norm(wxyz_raw)
+    return jnp.rad2deg(2*jnp.arccos(wxyz_raw[0]))
 
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
 
     logger = logging.getLogger(__name__)
-    logger.info(OmegaConf.to_yaml(cfg))
+    # logger.info(OmegaConf.to_yaml(cfg))
     config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
     
-    run_dir = HydraConfig.get().run.dir
+    run_dir = HydraConfig.get().run.dir 
+    os.makedirs(os.path.join(run_dir, "plots"), exist_ok=True)
+    os.makedirs(os.path.join(run_dir, "data"), exist_ok=True)
+
     logger.info(f"Saving traces to {run_dir}")
 
     def setup_specimen(specimen: SpecimenConfig):
@@ -281,15 +289,33 @@ def main(cfg: FullConfig):
         simulates_quantity=True,
         quantity_mode='intensity'
     )
+    
     logger.info(f"image_model: {image_model}")
-    jnp.savez(os.path.join(run_dir, "initial_image_model.npz"), image_model=image_model)
-    image_ref = image_model.simulate()
+    jnp.savez(os.path.join(run_dir, "data/initial_image_model.npz"), image_model=image_model, )
+    image_model_obs = apply_all_cv(
+        image_model=image_model,
+        wxyz=pose.wxyz,
+        offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms,
+        offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms,
+        cv_scalar=config.setup.cv.value,
+        defocus_scalar=config.setup.ctf.defocus_in_angstroms,
+    )
 
-    plt.imshow(image_ref, cmap='gray')
-    plt.savefig(os.path.join(run_dir, "observed_image.png"))
-    # close / clear
+    proj_obs = image_model_obs.simulate()
+    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(0),  config.setup.noise.dose*(proj_obs + config.setup.noise.background))
+
+    plt.imshow(proj_obs, cmap='gray')
+    plt.colorbar()
+    plt.savefig(os.path.join(run_dir, "plots/proj_obs.png"))
     plt.clf()
 
+    plt.imshow(proj_obs_noisy, cmap='gray')
+    plt.colorbar()
+    plt.savefig(os.path.join(run_dir, "plots/proj_obs_noisy.png"))
+    plt.clf()
+
+    jnp.save(os.path.join(run_dir, "data/proj_obs.npy"), proj_obs)
+    jnp.save(os.path.join(run_dir, "data/proj_obs_noisy.npy"), proj_obs_noisy)
     
     xm, ym = jnp.meshgrid(
         jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
@@ -297,14 +323,7 @@ def main(cfg: FullConfig):
         indexing='ij',
     )
     grid = jnp.stack([xm, ym], axis=-1)
-    proj_obs = apply_all_cv(
-        image_model=image_model,
-        wxyz=pose.wxyz,
-        offset_x_in_angstroms=config.setup.pose.translation.offset_x_in_angstroms,
-        offset_y_in_angstroms=config.setup.pose.translation.offset_y_in_angstroms,
-        cv_scalar=config.setup.cv.value,
-        defocus_scalar=config.setup.ctf.defocus_in_angstroms,
-    ).simulate()
+
 
     @dataclass
     class OptParams(eqx.Module):
@@ -316,7 +335,7 @@ def main(cfg: FullConfig):
 
     def loss_for_params(params: OptParams, key):
         return loss_for_pose_and_cv(
-            image_ref=proj_obs,
+            image_ref=proj_obs_noisy,
             image_model=image_model,
             cv_scalar=params.cv,
             defocus_scalar=params.defocus,
@@ -326,6 +345,7 @@ def main(cfg: FullConfig):
             use_this_objective=config.optimization.use_this_objective,
             grid=grid,
             sliced_wasserstein=config.optimization.sliced_wasserstein,
+            noise=config.inference_model.noise,
             key=key,
         )
 
@@ -361,6 +381,7 @@ def main(cfg: FullConfig):
         wxyzs = []
         offset_xs = []
         offset_ys = []
+        geodesic_angles = [] # from unit quaternion
 
         params = initial_params
         preconditioner = optimization_cfg.preconditioner[optimization_cfg.use_this_objective]
@@ -375,6 +396,7 @@ def main(cfg: FullConfig):
             wxyzs.append(jnp.array(params.wxyz))  # store array form for quaternion
             offset_xs.append(float(params.offset_x_in_angstroms))
             offset_ys.append(float(params.offset_y_in_angstroms))
+            geodesic_angles.append(float(unnormalized_quaternion_to_geodesic(params.wxyz)))
 
             # SGD-like update (apply preconditioning factors from config)
             if optimization_cfg.optimize_these_variables.cv:
@@ -410,11 +432,12 @@ def main(cfg: FullConfig):
                     f"Step {i:03d}: loss={loss_val:.6e}, cv={float(params.cv):.6f}, defocus={float(params.defocus):.6f}, "
                     f"offset_x={float(params.offset_x_in_angstroms):.6f}, offset_y={float(params.offset_y_in_angstroms):.6f}, "
                     f"wxyz=({float(params.wxyz[0]):.6f}, {float(params.wxyz[1]):.6f}, {float(params.wxyz[2]):.6f}, {float(params.wxyz[3]):.6f}), "
-                    f"grad_cv={float(grads.cv):.6f}, "
-                    f"grad_defocus={float(grads.defocus):.6f}, "
-                    f"grad_offset_x={float(grads.offset_x_in_angstroms):.6f}, "
-                    f"grad_offset_y={float(grads.offset_y_in_angstroms):.6f}, "
-                    f"grad_wxyz=({float(grads.wxyz[0]):.6f}, {float(grads.wxyz[1]):.6f}, {float(grads.wxyz[2]):.6f}, {float(grads.wxyz[3]):.6f})"
+                    f"geodesic_angle={geodesic_angles[-1]:.3f} degrees, "
+                    f"grad_cv={float(grads.cv):.2e}, "
+                    f"grad_defocus={float(grads.defocus):.2e}, "
+                    f"grad_offset_x={float(grads.offset_x_in_angstroms):.2e}, "
+                    f"grad_offset_y={float(grads.offset_y_in_angstroms):.2e}, "
+                    f"grad_wxyz=({float(grads.wxyz[0]):.2e}, {float(grads.wxyz[1]):.2e}, {float(grads.wxyz[2]):.2e}, {float(grads.wxyz[3]):.2e})"
                 )
 
         return (
@@ -422,54 +445,61 @@ def main(cfg: FullConfig):
             jnp.array(cvs),
             jnp.array(defoci),  
             jnp.stack(wxyzs),
+            jnp.array(geodesic_angles),
             jnp.array(offset_xs),
             jnp.array(offset_ys),
         )
 
     start = time()
-    losses, cvs, defoci, wxyzs, offset_xs, offset_ys = optimization(config.optimization, key, params0)
+    losses, cvs, defoci, wxyzs, geodesic_angles, offset_xs, offset_ys = optimization(config.optimization, key, params0)
     end = time()
     logger.info(f"Optimization took {end - start:.2f} seconds.")
     logger.info(f'Output in {run_dir}')
 
-    jnp.savez(os.path.join(run_dir, "joint_gradient_descent_traces.npz"),
+    jnp.savez(os.path.join(run_dir, "data/joint_gradient_descent_traces.npz"),
              losses=losses,
              cvs=cvs,
              defoci=defoci,
              wxyzs=wxyzs,
+             geodesic_angles=geodesic_angles,
              offset_xs=offset_xs,
              offset_ys=offset_ys,
     )
 
     plt.plot(losses, label="Loss")
     plt.legend()
-    plt.savefig(os.path.join(run_dir, "loss_curve.png"))
+    plt.savefig(os.path.join(run_dir, "plots/loss_curve.png"))
     plt.clf()
     plt.plot(cvs, label="CV")
     plt.axhline(y=config.setup.cv.value, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
-    plt.savefig(os.path.join(run_dir, "cv_curve.png"))
+    plt.savefig(os.path.join(run_dir, "plots/cv_curve.png"))
     plt.clf()
     plt.plot(defoci, label="Defocus")
     plt.axhline(y=config.setup.ctf.defocus_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
-    plt.savefig(os.path.join(run_dir, "defocus_curve.png"))
+    plt.savefig(os.path.join(run_dir, "plots/defocus_curve.png"))
     plt.clf()
     plt.plot(wxyzs, label="WXYZ")
     for quaternion_component in setup_pose_wxyz:
         plt.axhline(y=quaternion_component, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
-    plt.savefig(os.path.join(run_dir, "wxyz_curve.png"))
+    plt.savefig(os.path.join(run_dir, "plots/wxyz_curve.png"))
+    plt.clf()
+    plt.plot(geodesic_angles, label="Geodesic Angle (degrees)")
+    plt.axhline(y=0, color='gray', linestyle='--', label='Ground Truth')
+    plt.legend()
+    plt.savefig(os.path.join(run_dir, "plots/geodesic_angle_curve.png"))
     plt.clf()
     plt.plot(offset_xs, label="Offset X")
     plt.axhline(y=config.setup.pose.translation.offset_x_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
-    plt.savefig(os.path.join(run_dir, "offset_x_curve.png"))
+    plt.savefig(os.path.join(run_dir, "plots/offset_x_curve.png"))
     plt.clf()
     plt.plot(offset_ys, label="Offset Y")
     plt.axhline(y=config.setup.pose.translation.offset_y_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
-    plt.savefig(os.path.join(run_dir, "offset_y_curve.png"))
+    plt.savefig(os.path.join(run_dir, "plots/offset_y_curve.png"))
     plt.clf()
     
     return None
