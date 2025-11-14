@@ -1,0 +1,66 @@
+objective:
+  sliced_wasserstein:
+    n_projections: 100
+    n_pixels: 300
+    random_seed: 42
+    # normalize_safely_epsilon: 1e-8
+    # - n_projections: 30
+    #   n_pixels: 30
+      
+landscape:
+  # n_trials_per_point: 3
+  # n_landscape_values: 4
+  n_trials: 5
+  landscape_variables:
+    # cv:
+    #   min_value: 0
+    #   max_value: 5
+    #   n_points: 10
+    rotation:
+      axis: [1.0, 1, 1]
+      min_geodesic_angle_in_degrees: 0.0
+      max_geodesic_angle_in_degrees: 10.0
+      n_points: 20
+      # concentration: [1, 0, 0, 0.0]
+      # n_batch: 100
+    # defocus:
+    #   min_value_in_angstroms: 2000.0
+    #   max_value_in_angstroms: 2000.0
+    #   n_points: 4
+    offset_x_in_angstroms:
+      min_value_in_angstroms: -2.0
+      max_value_in_angstroms: 2.0
+      n_points: 20
+    
+setup:
+  specimen:
+      pdb_file: "1uao_assembly.pdb"
+      selection_string: "not element H"
+      center: true
+  noise:
+      dose: 1e6
+      background: 0
+  image:
+      grid_size: 128
+      pixel_size: 0.5
+      pad_size: 128 
+  integrator:
+      atom_width: 0.25
+      atom_amplitude: 1.0
+  pose:
+      euler_angles_deg:
+        phi_angle: 0.0
+        theta_angle: 0.0
+        psi_angle: 0.0
+      translation:
+        offset_x_in_angstroms: 0.0
+        offset_y_in_angstroms: 0.0
+  ctf:
+      defocus_in_angstroms: 2000.0
+      voltage: 300.0
+  envelope:
+      amplitude: 1.0
+      b_factor: 10.0
+  cv:
+      type: tear
+      value: 0.0
