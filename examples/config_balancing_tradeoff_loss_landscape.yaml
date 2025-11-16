@@ -1,7 +1,7 @@
 objective:
   sliced_wasserstein:
-    n_projections: 100
-    n_pixels: 300
+    n_projections: ???
+    n_pixels: ???
     random_seed: 42
     # normalize_safely_epsilon: 1e-8
     # - n_projections: 30
@@ -10,7 +10,8 @@ objective:
 landscape:
   # n_trials_per_point: 3
   # n_landscape_values: 4
-  n_trials: 5
+  n_trials: ???
+  n_trials_chunks: 10
   landscape_variables:
     # cv:
     #   min_value: 0
@@ -38,7 +39,7 @@ setup:
       selection_string: "not element H"
       center: true
   noise:
-      dose: 1e6
+      dose: 100
       background: 0
   image:
       grid_size: 128

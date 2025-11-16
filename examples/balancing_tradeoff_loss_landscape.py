@@ -4,6 +4,7 @@ from omegaconf import OmegaConf
 from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
+import numpy as np
 import equinox as eqx
 import matplotlib.pyplot as plt
 from time import time
@@ -22,6 +23,7 @@ from joint_gradient_descent import (
     SetupConfig,
     apply_all_cv,
 )
+from tqdm import tqdm
 
 
 @dataclass
@@ -30,6 +32,7 @@ class LandscapeConfig:
     # n_landscape_values: int
     landscape_variables: dict[str, dict[str, Any]] #dict[str, dict[str, Union[float, list[float]]]]
     n_trials: int
+    n_trials_chunks: int
 
     def __post_init__(self):
         if len(self.landscape_variables) != 2:
@@ -150,158 +153,180 @@ def main(cfg: FullConfig):
 
 
     sliced_wasserstein = config.objective.sliced_wasserstein
-    if True:
-    # for idx, sliced_wasserstein in enumerate(sliced_wasserstein):
-        print(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
-        n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
-        # key = jax.random.PRNGKey(idx)
-        
+    print(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
+    n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
+    # key = jax.random.PRNGKey(idx)
+    
 
-        cv_dict = {
-                'rotation': pose.wxyz,
-                'defocus': jnp.array(config.setup.ctf.defocus_in_angstroms),
-                'offset_x_in_angstroms': jnp.array(config.setup.pose.translation.offset_x_in_angstroms),
-                'offset_y_in_angstroms': jnp.array(config.setup.pose.translation.offset_y_in_angstroms),
-                'cv': jnp.array(config.setup.cv.value),
-            }
+    cv_dict = {
+            'rotation': pose.wxyz,
+            'defocus': jnp.array(config.setup.ctf.defocus_in_angstroms),
+            'offset_x_in_angstroms': jnp.array(config.setup.pose.translation.offset_x_in_angstroms),
+            'offset_y_in_angstroms': jnp.array(config.setup.pose.translation.offset_y_in_angstroms),
+            'cv': jnp.array(config.setup.cv.value),
+        }
 
-        for var_name, var_config in config.landscape.landscape_variables.items():
-            cv_dict[var_name] = jnp.broadcast_to(cv_dict[var_name], (var_config.n_points,) + cv_dict[var_name].shape)
+    for var_name, var_config in config.landscape.landscape_variables.items():
+        cv_dict[var_name] = jnp.broadcast_to(cv_dict[var_name], (var_config.n_points,) + cv_dict[var_name].shape)
 
 
-            if var_name == 'rotation':
-                # from numpyro.distributions.directional import ProjectedNormal
+        if var_name == 'rotation':
+            # from numpyro.distributions.directional import ProjectedNormal
 
-                # def quaternion_rejection_sampling(min_geodesic_angle_in_degrees, max_geodesic_angle_in_degrees, n_points, key):
-                #     wxyz_list = []
-                #     pn = ProjectedNormal(concentration=var_config.concentration)
-                #     while len(wxyz_list) < n_points:
-                #         unit_quaternions = pn.sample(key, sample_shape=(var_config.n_batch,))
-                #         geodesic_distance_in_degrees = jnp.arccos(jnp.abs(unit_quaternions[:, 0])) * (180.0 / jnp.pi) * 2.0
-                #         mask = (geodesic_distance_in_degrees >= min_geodesic_angle_in_degrees) & (geodesic_distance_in_degrees <= max_geodesic_angle_in_degrees)
-                #         wxyz_list.extend(unit_quaternions[mask].tolist())
-                #         key, _ = jax.random.split(key)
-                #     return jnp.array(wxyz_list[:n_points])
-                # var_config['wxyz_list'] = quaternion_rejection_sampling(
-                #     var_config['min_geodesic_angle_in_degrees'],
-                #     var_config['max_geodesic_angle_in_degrees'],
-                #     var_config['n_points'],
-                #     key,
-                # )
-                def axis_angle_to_quaterion(axis, angle):
-                    half_angle = angle / 2.0
-                    w = jnp.cos(half_angle)
-                    x = axis[0] * jnp.sin(half_angle)
-                    y = axis[1] * jnp.sin(half_angle)
-                    z = axis[2] * jnp.sin(half_angle)
-                    return jnp.array([w, x, y, z])
-  
+            # def quaternion_rejection_sampling(min_geodesic_angle_in_degrees, max_geodesic_angle_in_degrees, n_points, key):
+            #     wxyz_list = []
+            #     pn = ProjectedNormal(concentration=var_config.concentration)
+            #     while len(wxyz_list) < n_points:
+            #         unit_quaternions = pn.sample(key, sample_shape=(var_config.n_batch,))
+            #         geodesic_distance_in_degrees = jnp.arccos(jnp.abs(unit_quaternions[:, 0])) * (180.0 / jnp.pi) * 2.0
+            #         mask = (geodesic_distance_in_degrees >= min_geodesic_angle_in_degrees) & (geodesic_distance_in_degrees <= max_geodesic_angle_in_degrees)
+            #         wxyz_list.extend(unit_quaternions[mask].tolist())
+            #         key, _ = jax.random.split(key)
+            #     return jnp.array(wxyz_list[:n_points])
+            # var_config['wxyz_list'] = quaternion_rejection_sampling(
+            #     var_config['min_geodesic_angle_in_degrees'],
+            #     var_config['max_geodesic_angle_in_degrees'],
+            #     var_config['n_points'],
+            #     key,
+            # )
+            def axis_angle_to_quaterion(axis, angle):
+                half_angle = angle / 2.0
+                w = jnp.cos(half_angle)
+                x = axis[0] * jnp.sin(half_angle)
+                y = axis[1] * jnp.sin(half_angle)
+                z = axis[2] * jnp.sin(half_angle)
+                return jnp.array([w, x, y, z])
 
-                wxyz_list = []
-                for angle in jnp.linspace(var_config['min_geodesic_angle_in_degrees'],
-                                            var_config['max_geodesic_angle_in_degrees'],
-                                            var_config['n_points']):
-                    wxyz = axis_angle_to_quaterion(
-                        axis=jnp.array(config.landscape.landscape_variables['rotation']['axis']),
-                        angle=angle * (jnp.pi / 180.0)
-                    )
-                    wxyz_list.append(wxyz)
-                cv_dict['rotation'] = jnp.array(wxyz_list)
-            elif var_name == 'defocus':
-                cv_dict['defocus'] = jnp.linspace(
-                    var_config['min_value_in_angstroms'],
-                    var_config['max_value_in_angstroms'],
-                    var_config['n_points'],
+
+            wxyz_list = []
+            for angle in jnp.linspace(var_config['min_geodesic_angle_in_degrees'],
+                                        var_config['max_geodesic_angle_in_degrees'],
+                                        var_config['n_points']):
+                wxyz = axis_angle_to_quaterion(
+                    axis=jnp.array(config.landscape.landscape_variables['rotation']['axis']),
+                    angle=angle * (jnp.pi / 180.0)
                 )
-            elif var_name == 'offset_x_in_angstroms':
-                cv_dict['offset_x_in_angstroms'] = jnp.linspace(
-                    var_config['min_value_in_angstroms'],
-                    var_config['max_value_in_angstroms'],
-                    var_config['n_points'],
-                )
-            elif var_name == 'offset_y_in_angstroms':
-                cv_dict['offset_y_in_angstroms'] = jnp.linspace(
-                    var_config['min_value_in_angstroms'],
-                    var_config['max_value_in_angstroms'],
-                    var_config['n_points'],
-                )
-            elif var_name == 'cv':
-                cv_dict['cv'] = jnp.linspace(
-                    var_config['min_value'],
-                    var_config['max_value'],
-                    var_config['n_points'],
-                )
-        print(f"cv_dict: {cv_dict}")
-
-        key1, key2 = config.landscape.landscape_variables.keys()
-        cv_grid = cv_dict[key1]
-        other_grid = cv_dict[key2]
-
-        def eval_sw(cv, other, key):
-            wxyz = pose.wxyz
-            defocus = config.setup.ctf.defocus_in_angstroms
-            offset_x = config.setup.pose.translation.offset_x_in_angstroms
-            offset_y = config.setup.pose.translation.offset_y_in_angstroms
-            cv_scalar = config.setup.cv.value
-            if 'rotation' == key1:
-                wxyz = cv
-            elif 'defocus' == key1:
-                defocus = cv
-            elif 'offset_x_in_angstroms' == key1:
-                offset_x = cv
-            elif 'offset_y_in_angstroms' == key1:
-                offset_y = cv
-            elif 'cv' == key1:
-                cv = cv
-            if 'rotation' == key2:
-                wxyz = other
-            elif 'defocus' == key2:
-                defocus = other
-            elif 'offset_x_in_angstroms' == key2:
-                offset_x = other
-            elif 'offset_y_in_angstroms' == key2:
-                offset_y = other
-            elif 'cv' == key2:
-                cv = other
-            new_image_model = apply_all_cv(
-                image_model,
-                wxyz=wxyz,
-                cv_scalar=cv_scalar,
-                defocus_scalar=defocus,
-                offset_x_in_angstroms=offset_x,
-                offset_y_in_angstroms=offset_y,
+                wxyz_list.append(wxyz)
+            cv_dict['rotation'] = jnp.array(wxyz_list)
+        elif var_name == 'defocus':
+            cv_dict['defocus'] = jnp.linspace(
+                var_config['min_value_in_angstroms'],
+                var_config['max_value_in_angstroms'],
+                var_config['n_points'],
             )
-            return sw_sorted_jax_differentiable(
-                config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background,
-                proj_obs_noisy,
-                grid,
-                n_projections,
-                n_pixels,
-                sliced_wasserstein.normalize_safely_epsilon,
-                key,
+        elif var_name == 'offset_x_in_angstroms':
+            cv_dict['offset_x_in_angstroms'] = jnp.linspace(
+                var_config['min_value_in_angstroms'],
+                var_config['max_value_in_angstroms'],
+                var_config['n_points'],
             )
+        elif var_name == 'offset_y_in_angstroms':
+            cv_dict['offset_y_in_angstroms'] = jnp.linspace(
+                var_config['min_value_in_angstroms'],
+                var_config['max_value_in_angstroms'],
+                var_config['n_points'],
+            )
+        elif var_name == 'cv':
+            cv_dict['cv'] = jnp.linspace(
+                var_config['min_value'],
+                var_config['max_value'],
+                var_config['n_points'],
+            )
+    print(f"cv_dict: {cv_dict}")
 
-        vmap_size = len(cv_grid) * len(other_grid)
-        vmap_shape = (len(cv_grid), len(other_grid))
+    key1, key2 = config.landscape.landscape_variables.keys()
+    cv_grid = cv_dict[key1]
+    other_grid = cv_dict[key2]
 
-        # vmap correctly over cv and other
-        eval_sw_vmapped = jax.vmap(
-            jax.vmap(eval_sw, in_axes=(None, 0, 0)),  # inner: over OTHER axis=0
-            in_axes=(0, None, 0)                      # outer: over CV axis=0
+    def eval_sw(cv, other, key):
+        wxyz = pose.wxyz
+        defocus = config.setup.ctf.defocus_in_angstroms
+        offset_x = config.setup.pose.translation.offset_x_in_angstroms
+        offset_y = config.setup.pose.translation.offset_y_in_angstroms
+        cv_scalar = config.setup.cv.value
+        if 'rotation' == key1:
+            wxyz = cv
+        elif 'defocus' == key1:
+            defocus = cv
+        elif 'offset_x_in_angstroms' == key1:
+            offset_x = cv
+        elif 'offset_y_in_angstroms' == key1:
+            offset_y = cv
+        elif 'cv' == key1:
+            cv = cv
+        if 'rotation' == key2:
+            wxyz = other
+        elif 'defocus' == key2:
+            defocus = other
+        elif 'offset_x_in_angstroms' == key2:
+            offset_x = other
+        elif 'offset_y_in_angstroms' == key2:
+            offset_y = other
+        elif 'cv' == key2:
+            cv = other
+        new_image_model = apply_all_cv(
+            image_model,
+            wxyz=wxyz,
+            cv_scalar=cv_scalar,
+            defocus_scalar=defocus,
+            offset_x_in_angstroms=offset_x,
+            offset_y_in_angstroms=offset_y,
+        )
+        return sw_sorted_jax_differentiable(
+            config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background,
+            proj_obs_noisy,
+            grid,
+            n_projections,
+            n_pixels,
+            sliced_wasserstein.normalize_safely_epsilon,
+            key,
         )
 
-        eval_sw_vmapped_jit = jax.jit(eval_sw_vmapped)
+    vmap_size = len(cv_grid) * len(other_grid)
+    vmap_shape = (len(cv_grid), len(other_grid))
 
-        # multiple trials
-        key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
-        rep_keys = jax.random.split(key_main, config.landscape.n_trials)
+    # vmap correctly over cv and other
+    eval_sw_vmapped = jax.vmap(
+        jax.vmap(eval_sw, in_axes=(None, 0, 0)),  # inner: over OTHER axis=0
+        in_axes=(0, None, 0)                      # outer: over CV axis=0
+    )
 
-        def run_trial(k):
-            ks = jax.random.split(k, vmap_size).reshape(vmap_shape + (2,))
-            return eval_sw_vmapped_jit(cv_grid, other_grid, ks)
+    eval_sw_vmapped_jit = jax.jit(eval_sw_vmapped)
 
-        sw_landscapes = jax.vmap(run_trial)(rep_keys)
-        jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes)
+    # multiple trials
+    key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
+    rep_keys = jax.random.split(key_main, config.landscape.n_trials)
+
+    def run_trial(k):
+        ks = jax.random.split(k, vmap_size).reshape(vmap_shape + (2,))
+        return eval_sw_vmapped_jit(cv_grid, other_grid, ks)
+
+    # Chunk the vmapped trials to avoid huge peak device allocations.
+    # Target roughly a 10x reduction in peak memory by splitting trials into
+    # ~10 chunks. This processes chunks sequentially on the device and
+    # moves each completed chunk to host (downcast to float32) before
+    # proceeding, which greatly reduces device memory pressure.
+    n_trials = config.landscape.n_trials
+    target_reduction = config.landscape.n_trials_chunks
+    chunk_size = max(1, (n_trials + target_reduction - 1) // target_reduction)
+
+    # jit the vmapped run for a chunk
+    vmapped_run_trial = jax.jit(jax.vmap(run_trial))
+
+    chunks = []
+    total_chunks = (n_trials + chunk_size - 1) // chunk_size
+    # iterate with a progress bar (tqdm) if available; otherwise plain loop
+    for i in tqdm(range(0, n_trials, chunk_size), total=total_chunks, desc="SW chunks", unit="chunk"):
+        keys_chunk = rep_keys[i : i + chunk_size]
+        res_chunk = vmapped_run_trial(keys_chunk)
+        # ensure device computation finished before transfer
+        res_chunk = res_chunk.block_until_ready()
+        # transfer to host and downcast to float32 to reduce host memory
+        res_chunk_host = jax.device_get(res_chunk).astype(np.float32)
+        chunks.append(res_chunk_host)
+
+    sw_landscapes_host = np.concatenate(chunks, axis=0)
+    np.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
 
 if __name__ == "__main__":
     main()
