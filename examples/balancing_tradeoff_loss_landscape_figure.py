@@ -72,6 +72,7 @@ def main(cfg: FullConfig):
     roughness_trends_data = []
     average_landscapes_data = []
     noise_dose_list = []
+    noisy_image_list = []
     for noise_dose, df_group in df.groupby('noise_dose'):
         noise_dose_list.append(noise_dose)
         # group by noise_dose
@@ -83,12 +84,12 @@ def main(cfg: FullConfig):
             normalized = (sw_landscape - sw_landscape.mean()) / sw_landscape.std()
             trend = jnp.stack([compute_roughness_metrics(normalized[:i].mean(axis=0), config.roughness_threshold) for i in range(1, normalized.shape[0]+1)])
             label = 'n_pixels='+str(df_group.iloc[idx]['sw_n_pixels'])
-            roughness_trends_data.append({
+            roughness_trends_data.append(pd.DataFrame({
                 'noise_dose': noise_dose,
                 'n_pixels': df_group.iloc[idx]['sw_n_pixels'],
                 'trend': trend,
                 'dose': noise_dose,
-            })
+            }))
             plt.plot(trend, label=label)
         plt.legend()
         plt.savefig(os.path.join(run_dir, f'roughness_trends_dose{noise_dose}.png'))
@@ -107,11 +108,66 @@ def main(cfg: FullConfig):
                 plt.savefig(os.path.join(run_dir, f'averaged_landscape_n_pixels_{config.n_pixels_plot}_dose{noise_dose}.png'))
                 plt.clf()
 
-    pd.DataFrame(roughness_trends_data).to_csv(os.path.join(run_dir, f'roughness_trends.csv'))
-    jnp.savez(os.path.join(run_dir, f'average_landscapes_n_pixels_{config.n_pixels_plot}.npz'), 
+        # noisy image
+        noisy_image_path = df_group.iloc[0]['noisy_image_path']
+        noisy_image = jnp.load(noisy_image_path)
+        noisy_image_list.append(noisy_image)
+        plt.figure()
+        plt.imshow(noisy_image, cmap='gray_r')
+        plt.colorbar()
+        plt.title(f'Noisy image dose={noise_dose}')
+        plt.savefig(os.path.join(run_dir, f'noisy_image_dose{noise_dose}.png'))
+        plt.clf()
+
+    # save data
+    roughness_trends_data_df = pd.concat(roughness_trends_data, ignore_index=True)
+    roughness_trends_data_df.to_csv(os.path.join(run_dir, f'roughness_trends.csv'))
+    jnp.savez(os.path.join(run_dir, f'landscapes_and_images_{config.n_pixels_plot}.npz'), 
               average_landscape=jnp.stack(average_landscapes_data),
-              noise_dose=jnp.array(noise_dose_list)
+              noise_dose=jnp.array(noise_dose_list),
+              noisy_images=jnp.stack(noisy_image_list)
               )
+    
+    # plot
+    # nrows = 3
+    # ncols = len(noise_dose_list)
+    # base_figsize = 4
+    # figsize = (base_figsize*ncols, base_figsize*nrows)
+    # fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
+    for noise_dose, df_dose_group in roughness_trends_data_df.groupby('noise_dose'):
+        plt.figure()
+        for n_pixels, df_pixel_group in df_dose_group.groupby('n_pixels'):
+            label = 'n_pixels='+str(n_pixels)
+            plt.plot(df_pixel_group.trend.values.tolist(), label=label)
+        plt.title(f'Roughness trend for noise dose={noise_dose}')
+        plt.xlabel('Number of averaged trials')
+        plt.ylabel('High-frequency power fraction')
+        plt.legend()
+        plt.savefig(os.path.join(run_dir, f'roughness_trends_dose{noise_dose}_2.png'))
+        plt.clf()
+
+    landscape_data = jnp.load(os.path.join(run_dir, f'landscapes_and_images_{config.n_pixels_plot}.npz'))
+    average_landscapes = landscape_data['average_landscape']
+    noise_dose_array = landscape_data['noise_dose']
+    noisy_images = landscape_data['noisy_images']
+    for i in range(len(noise_dose_array)):
+        noise_dose = noise_dose_array[i]
+        averaged_landscape = average_landscapes[i]
+        noisy_image = noisy_images[i]
+
+        plt.figure()
+        plt.imshow(averaged_landscape, cmap='jet')
+        plt.colorbar()
+        plt.title(f'Averaged landscape n_pixels={config.n_pixels_plot} dose={noise_dose}')
+        plt.savefig(os.path.join(run_dir, f'averaged_landscape_n_pixels_{config.n_pixels_plot}_dose{noise_dose}_2.png'))
+        plt.clf()
+
+        plt.figure()
+        plt.imshow(noisy_image, cmap='gray_r')
+        plt.colorbar()
+        plt.title(f'Noisy image dose={noise_dose}')
+        plt.savefig(os.path.join(run_dir, f'noisy_image_dose{noise_dose}_2.png'))
+        plt.clf()
 
 
 if __name__ == "__main__":
