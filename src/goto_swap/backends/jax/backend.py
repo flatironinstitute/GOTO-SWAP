@@ -41,10 +41,18 @@ class JAXBackend(BackendInterface):
         Returns:
             Wasserstein distance loss
         """
+        # Check array lenghts
+        if x.ndim < 3 or x_true.ndim < 3:
+            raise ValueError("The input parameters x and x_true must be 3D (B, H, W) or 4D arrays (B, H, W, C).")
+        elif x.ndim > 4 or x_true.ndim > 4:
+            raise ValueError("The input parameters x and x_true must be 3D (B, H, W) or 4D arrays (B, H, W, C).")
+        x = x if x.ndim == 3 else x[..., 0]
+        x_true = x_true if x_true.ndim == 3 else x_true[..., 0]
+        
         # Soft circular mask
         Y, X = jnp.ogrid[:x.shape[1], :x.shape[2]]
-        dist_from_center = jnp.sqrt((X - 0.5 * x.shape[0]) ** 2 + (Y - 0.5 * x.shape[1]) ** 2)
-        mask = (dist_from_center <= 0.5 * x.shape[0]).astype(jnp.float32)[None, ..., None]
+        dist_from_center = jnp.sqrt((X - 0.5 * x.shape[1]) ** 2 + (Y - 0.5 * x.shape[1]) ** 2)
+        mask = (dist_from_center <= 0.5 * x.shape[1]).astype(jnp.float32)[None, ..., None]
         mask = dm_pix.gaussian_blur(mask, 1.0, kernel_size=5)[..., 0]
 
         # Apply soft mask to images
