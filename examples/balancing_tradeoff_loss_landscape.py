@@ -54,9 +54,22 @@ class SlicedWassersteinConfig:
         if self.n_projections % self.n_projections_chunk_size == 0:
             raise ValueError("n_projections must be divisible by n_projections_chunk_size")
 
+
+@dataclass
+class EmdConfig:
+    crop_to_box_size: int
+    kwargs: dict[str, Any]
+
 @dataclass
 class ObjectiveConfig:
     sliced_wasserstein: SlicedWassersteinConfig
+    use_this_objective: str 
+    emd: EmdConfig
+
+    # post init to check objective type
+    def __post_init__(self):
+        if self.use_this_objective not in ['sw', 'emd']:
+            raise ValueError("use_this_objective must be either 'sw' or 'emd'")
 
 
 @dataclass
@@ -134,12 +147,12 @@ def main(cfg: FullConfig):
         defocus_scalar=config.setup.ctf.defocus_in_angstroms,
     )
 
-    proj_obs = image_model_obs.simulate()
-    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(0),  config.setup.noise.dose*(proj_obs + config.setup.noise.background))
+    proj_obs_clean = image_model_obs.simulate()
+    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(0),  config.setup.noise.dose*(proj_obs_clean + config.setup.noise.background))
 
-    plt.imshow(proj_obs, cmap='gray')
+    plt.imshow(proj_obs_clean, cmap='gray')
     plt.colorbar()
-    plt.savefig(os.path.join(run_dir, "plots/proj_obs.png"))
+    plt.savefig(os.path.join(run_dir, "plots/proj_obs_clean.png"))
     plt.clf()
 
     plt.imshow(proj_obs_noisy, cmap='gray')
@@ -147,7 +160,7 @@ def main(cfg: FullConfig):
     plt.savefig(os.path.join(run_dir, "plots/proj_obs_noisy.png"))
     plt.clf()
 
-    jnp.save(os.path.join(run_dir, "data/proj_obs.npy"), proj_obs)
+    jnp.save(os.path.join(run_dir, "data/proj_obs_clean.npy"), proj_obs_clean)
     jnp.save(os.path.join(run_dir, "data/proj_obs_noisy.npy"), proj_obs_noisy)
     
     xm, ym = jnp.meshgrid(
@@ -177,24 +190,7 @@ def main(cfg: FullConfig):
 
 
         if var_name == 'rotation':
-            # from numpyro.distributions.directional import ProjectedNormal
 
-            # def quaternion_rejection_sampling(min_geodesic_angle_in_degrees, max_geodesic_angle_in_degrees, n_points, key):
-            #     wxyz_list = []
-            #     pn = ProjectedNormal(concentration=var_config.concentration)
-            #     while len(wxyz_list) < n_points:
-            #         unit_quaternions = pn.sample(key, sample_shape=(var_config.n_batch,))
-            #         geodesic_distance_in_degrees = jnp.arccos(jnp.abs(unit_quaternions[:, 0])) * (180.0 / jnp.pi) * 2.0
-            #         mask = (geodesic_distance_in_degrees >= min_geodesic_angle_in_degrees) & (geodesic_distance_in_degrees <= max_geodesic_angle_in_degrees)
-            #         wxyz_list.extend(unit_quaternions[mask].tolist())
-            #         key, _ = jax.random.split(key)
-            #     return jnp.array(wxyz_list[:n_points])
-            # var_config['wxyz_list'] = quaternion_rejection_sampling(
-            #     var_config['min_geodesic_angle_in_degrees'],
-            #     var_config['max_geodesic_angle_in_degrees'],
-            #     var_config['n_points'],
-            #     key,
-            # )
             def axis_angle_to_quaterion(axis, angle):
                 half_angle = angle / 2.0
                 w = jnp.cos(half_angle)
@@ -244,140 +240,218 @@ def main(cfg: FullConfig):
     cv_grid = cv_dict[key1]
     other_grid = cv_dict[key2]
 
+    if config.objective.use_this_objective == 'emd':
+        import ot
+        H = W = config.objective.emd.crop_to_box_size
+        n_pix = proj_obs_noisy.shape[0]
+        crop_start_idx, crop_end_idx = (n_pix - H)//2, (n_pix + H)//2
+        img1 = proj_obs_noisy[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
+        assert img1.shape == (H, W)
 
-    def sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta):
+
+        def setup_cost_matrix(H, W):
+            xs = jnp.arange(H)
+            ys = jnp.arange(W)
+            X, Y = jnp.meshgrid(xs, ys, indexing="ij")            # shape (H, W)
+            coords = jnp.stack([X.ravel(), Y.ravel()], axis=1)    # (n_pixels, 2)
+            diff = coords[:, None, :] - coords[None, :, :]        # (n, n, 2)
+            C = jnp.sum(diff**2, axis=-1)                         # (n, n) squared Euclidean distances
+            return C
+        C = setup_cost_matrix(H, W)
+
+        def full_wasserstein_distance(img1, img2, C, **kwargs):
+            """Compute the full Wasserstein distance between two histograms a and b with cost matrix C."""
+            a = img1.ravel()
+            b = img2.ravel()
+            a = a / a.max()
+            b = b / b.max()
+            a /= a.sum()
+            b /= b.sum()
+            w_dist = ot.emd2(a, b, C, **kwargs)  # optimal transport plan
+            return w_dist
+
+
+        emd_landscape = jnp.zeros((len(cv_grid), len(other_grid)))
+        for i, cv in enumerate(tqdm(cv_grid, desc="Computing EMD landscape")):
+            for j, other in enumerate(other_grid):
+
+                wxyz = pose.wxyz
+                defocus = config.setup.ctf.defocus_in_angstroms
+                offset_x = config.setup.pose.translation.offset_x_in_angstroms
+                offset_y = config.setup.pose.translation.offset_y_in_angstroms
+                cv_scalar = config.setup.cv.value
+                if 'rotation' == key1:
+                    wxyz = cv
+                elif 'defocus' == key1:
+                    defocus = cv
+                elif 'offset_x_in_angstroms' == key1:
+                    offset_x = cv
+                elif 'offset_y_in_angstroms' == key1:
+                    offset_y = cv
+                elif 'cv' == key1:
+                    cv = cv
+                if 'rotation' == key2:
+                    wxyz = other
+                elif 'defocus' == key2:
+                    defocus = other
+                elif 'offset_x_in_angstroms' == key2:
+                    offset_x = other
+                elif 'offset_y_in_angstroms' == key2:
+                    offset_y = other
+                elif 'cv' == key2:
+                    cv = other
+                new_image_model = apply_all_cv(
+                    image_model,
+                    wxyz=wxyz,
+                    cv_scalar=cv_scalar,
+                    defocus_scalar=defocus,
+                    offset_x_in_angstroms=offset_x,
+                    offset_y_in_angstroms=offset_y,
+                )
+                proj_simulated = config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background
+                img2 = proj_simulated[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
+                assert img2.shape == (H, W)
+                emd_landscape = emd_landscape.at[i,j].set(full_wasserstein_distance(img1.astype(jnp.float32), img2.astype(jnp.float32), C, **config.objective.emd.kwargs))  # scalar transport cost with squared-euclidean cost
+        print("emd2 (squared-Wasserstein cost):", emd_landscape) 
+        jnp.save(os.path.join(run_dir, "data/emd_landscape.npy"), emd_landscape)
+        landscape_for_plotting = emd_landscape
+
+    elif config.objective.use_this_objective =='sw':
+
+
+        def sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta):
+        
+            v_weights = image_1.flatten()
+            u_weights = image_2.flatten()
+
+            def loss_per_theta(theta, key):
+                project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
+                perm = jax.random.permutation(key, len(project))[:n_pixels]
+                x_ab = project[perm]
+                sort_idx = jnp.argsort(x_ab)
+                x_ab_sorted = x_ab[sort_idx]
+                a_sorted = u_weights[perm][sort_idx] + normalize_safely_epsilon
+                b_sorted = v_weights[perm][sort_idx] + normalize_safely_epsilon
+                return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
+
+            return loss_per_theta(theta, key)
+
+        def _sw_sorted_jax_differentiable(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, theta, key):
+            return sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta)
     
-        v_weights = image_1.flatten()
-        u_weights = image_2.flatten()
-
-        def loss_per_theta(theta, key):
-            project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
-            perm = jax.random.permutation(key, len(project))[:n_pixels]
-            x_ab = project[perm]
-            sort_idx = jnp.argsort(x_ab)
-            x_ab_sorted = x_ab[sort_idx]
-            a_sorted = u_weights[perm][sort_idx] + normalize_safely_epsilon
-            b_sorted = v_weights[perm][sort_idx] + normalize_safely_epsilon
-            return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
-
-        return loss_per_theta(theta, key)
-
-    def _sw_sorted_jax_differentiable(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, theta, key):
-        return sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta)
- 
 
 
-    def eval_sw_single_theta(cv, other, theta, key):
-        wxyz = pose.wxyz
-        defocus = config.setup.ctf.defocus_in_angstroms
-        offset_x = config.setup.pose.translation.offset_x_in_angstroms
-        offset_y = config.setup.pose.translation.offset_y_in_angstroms
-        cv_scalar = config.setup.cv.value
-        if 'rotation' == key1:
-            wxyz = cv
-        elif 'defocus' == key1:
-            defocus = cv
-        elif 'offset_x_in_angstroms' == key1:
-            offset_x = cv
-        elif 'offset_y_in_angstroms' == key1:
-            offset_y = cv
-        elif 'cv' == key1:
-            cv = cv
-        if 'rotation' == key2:
-            wxyz = other
-        elif 'defocus' == key2:
-            defocus = other
-        elif 'offset_x_in_angstroms' == key2:
-            offset_x = other
-        elif 'offset_y_in_angstroms' == key2:
-            offset_y = other
-        elif 'cv' == key2:
-            cv = other
-        new_image_model = apply_all_cv(
-            image_model,
-            wxyz=wxyz,
-            cv_scalar=cv_scalar,
-            defocus_scalar=defocus,
-            offset_x_in_angstroms=offset_x,
-            offset_y_in_angstroms=offset_y,
+        def eval_sw_single_theta(cv, other, theta, key):
+            wxyz = pose.wxyz
+            defocus = config.setup.ctf.defocus_in_angstroms
+            offset_x = config.setup.pose.translation.offset_x_in_angstroms
+            offset_y = config.setup.pose.translation.offset_y_in_angstroms
+            cv_scalar = config.setup.cv.value
+            if 'rotation' == key1:
+                wxyz = cv
+            elif 'defocus' == key1:
+                defocus = cv
+            elif 'offset_x_in_angstroms' == key1:
+                offset_x = cv
+            elif 'offset_y_in_angstroms' == key1:
+                offset_y = cv
+            elif 'cv' == key1:
+                cv = cv
+            if 'rotation' == key2:
+                wxyz = other
+            elif 'defocus' == key2:
+                defocus = other
+            elif 'offset_x_in_angstroms' == key2:
+                offset_x = other
+            elif 'offset_y_in_angstroms' == key2:
+                offset_y = other
+            elif 'cv' == key2:
+                cv = other
+            new_image_model = apply_all_cv(
+                image_model,
+                wxyz=wxyz,
+                cv_scalar=cv_scalar,
+                defocus_scalar=defocus,
+                offset_x_in_angstroms=offset_x,
+                offset_y_in_angstroms=offset_y,
+            )
+            return _sw_sorted_jax_differentiable(
+                config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background,
+                proj_obs_noisy,
+                grid,
+                n_pixels,
+                sliced_wasserstein.normalize_safely_epsilon,
+                theta,
+                key,
+            )
+        thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False) 
+
+        theta_vmap = jax.vmap(
+            eval_sw_single_theta,
+            in_axes=(None, None, 0, 0)   # cv, other, theta_i, key_i
         )
-        return _sw_sorted_jax_differentiable(
-            config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background,
-            proj_obs_noisy,
-            grid,
-            n_pixels,
-            sliced_wasserstein.normalize_safely_epsilon,
-            theta,
-            key,
+
+        inner_vmap = jax.vmap(
+            theta_vmap,
+            in_axes=(None, 0, None, 0)
         )
-    thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False) 
 
-    theta_vmap = jax.vmap(
-        eval_sw_single_theta,
-        in_axes=(None, None, 0, 0)   # cv, other, theta_i, key_i
-    )
+        full_vmap = jax.vmap(
+            inner_vmap,
+            in_axes=(0, None, None, 0)
+        )
 
-    inner_vmap = jax.vmap(
-        theta_vmap,
-        in_axes=(None, 0, None, 0)
-    )
+        thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False)
 
-    full_vmap = jax.vmap(
-        inner_vmap,
-        in_axes=(0, None, None, 0)
-    )
-    full_vmap_jit = jax.jit(full_vmap)
+        # Chunk over theta to limit peak device memory.
+        n_trials = config.landscape.n_trials
+        n_chunks = config.landscape.n_trials_chunks
+        trial_chunk_size = (n_trials + n_chunks - 1) // n_chunks
 
-    thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False)
+        key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
+        rep_keys = jax.random.split(key_main, n_trials)
 
-    # Chunk over theta to limit peak device memory.
-    n_trials = config.landscape.n_trials
-    n_chunks = config.landscape.n_trials_chunks
-    trial_chunk_size = (n_trials + n_chunks - 1) // n_chunks
+        theta_chunk_size = sliced_wasserstein.n_projections_chunk_size
+        theta_results_parts = []  # will collect chunks along theta axis
 
-    key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
-    rep_keys = jax.random.split(key_main, n_trials)
+        # iterate over theta chunks
+        for t_start in tqdm(range(0, len(thetas), theta_chunk_size), desc="Theta chunks", unit="theta-chunk"):
+            t_end = min(t_start + theta_chunk_size, len(thetas))
+            thetas_chunk = thetas[t_start:t_end]
+            n_theta_chunk = len(thetas_chunk)
 
-    theta_chunk_size = sliced_wasserstein.n_projections_chunk_size
-    theta_results_parts = []  # will collect chunks along theta axis
+            # build a per-trial runner that creates per-(cv,other,theta) keys for this theta chunk
+            def run_trial_theta_chunk(k):
+                vmap_shape_chunk = (len(cv_grid), len(other_grid), n_theta_chunk)
+                ks = jax.random.split(k, vmap_shape_chunk[0] * vmap_shape_chunk[1] * vmap_shape_chunk[2])
+                ks = ks.reshape(vmap_shape_chunk + (2,))
+                return full_vmap(cv_grid, other_grid, thetas_chunk, ks)
 
-    # iterate over theta chunks
-    for t_start in range(0, len(thetas), theta_chunk_size):
-        t_end = min(t_start + theta_chunk_size, len(thetas))
-        thetas_chunk = thetas[t_start:t_end]
-        n_theta_chunk = len(thetas_chunk)
+            # vmapped + jitted over trials for this theta chunk (compiled for the chunk shape)
+            vmapped_run_trial_for_chunk = jax.jit(jax.vmap(run_trial_theta_chunk))
 
-        # build a per-trial runner that creates per-(cv,other,theta) keys for this theta chunk
-        def run_trial_theta_chunk(k):
-            vmap_shape_chunk = (len(cv_grid), len(other_grid), n_theta_chunk)
-            ks = jax.random.split(k, vmap_shape_chunk[0] * vmap_shape_chunk[1] * vmap_shape_chunk[2])
-            ks = ks.reshape(vmap_shape_chunk + (2,))
-            return full_vmap(cv_grid, other_grid, thetas_chunk, ks)
+            # run over trial-chunks, transfer each chunk to host to free device memory between iterations
+            trial_chunks = []
+            total_trial_chunks = (n_trials + trial_chunk_size - 1) // trial_chunk_size
+            for i in tqdm(range(0, n_trials, trial_chunk_size), total=total_trial_chunks,
+                        desc=f"Theta {t_start}:{t_end}", unit="trial-chunk"):
+                keys_chunk = rep_keys[i : i + trial_chunk_size]
+                res_chunk = vmapped_run_trial_for_chunk(keys_chunk)   # shape: (chunk_size, n_cv, n_other, n_theta_chunk)
+                res_chunk.block_until_ready()
+                res_chunk_host = jax.device_get(res_chunk).astype(np.float32)
+                trial_chunks.append(res_chunk_host)
 
-        # vmapped + jitted over trials for this theta chunk (compiled for the chunk shape)
-        vmapped_run_trial_for_chunk = jax.jit(jax.vmap(run_trial_theta_chunk))
+            # concatenate trial chunks -> (n_trials, n_cv, n_other, n_theta_chunk)
+            chunked_by_trials = np.concatenate(trial_chunks, axis=0)
+            theta_results_parts.append(chunked_by_trials)
 
-        # run over trial-chunks, transfer each chunk to host to free device memory between iterations
-        trial_chunks = []
-        total_trial_chunks = (n_trials + trial_chunk_size - 1) // trial_chunk_size
-        for i in tqdm(range(0, n_trials, trial_chunk_size), total=total_trial_chunks,
-                      desc=f"Theta {t_start}:{t_end}", unit="trial-chunk"):
-            keys_chunk = rep_keys[i : i + trial_chunk_size]
-            res_chunk = vmapped_run_trial_for_chunk(keys_chunk)   # shape: (chunk_size, n_cv, n_other, n_theta_chunk)
-            res_chunk.block_until_ready()
-            res_chunk_host = jax.device_get(res_chunk).astype(np.float32)
-            trial_chunks.append(res_chunk_host)
+        # concatenate along theta axis -> (n_trials, n_cv, n_other, n_projections)
+        sw_landscapes_host = np.concatenate(theta_results_parts, axis=-1)
+        print(f"sw_landscapes_host shape: {sw_landscapes_host.shape}")
 
-        # concatenate trial chunks -> (n_trials, n_cv, n_other, n_theta_chunk)
-        chunked_by_trials = np.concatenate(trial_chunks, axis=0)
-        theta_results_parts.append(chunked_by_trials)
+        jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
+        landscape_for_plotting = sw_landscapes_host.mean(axis=(0, -1))
 
-    # concatenate along theta axis -> (n_trials, n_cv, n_other, n_projections)
-    sw_landscapes_host = np.concatenate(theta_results_parts, axis=-1)
-    print(f"sw_landscapes_host shape: {sw_landscapes_host.shape}")
-
-    jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
-    sw_landscapes_host = sw_landscapes_host.mean(axis=-1)
     if key1 == 'rotation':
         cv_grid_min = config.landscape.landscape_variables['rotation']['min_geodesic_angle_in_degrees']
         cv_grid_max = config.landscape.landscape_variables['rotation']['max_geodesic_angle_in_degrees']
@@ -390,14 +464,14 @@ def main(cfg: FullConfig):
     else:
         other_grid_min = other_grid.min()
         other_grid_max = other_grid.max()
-    plt.imshow(sw_landscapes_host.mean(axis=0), cmap='jet',
+    plt.imshow(landscape_for_plotting, cmap='jet',
                extent=(other_grid_min, other_grid_max, cv_grid_min, cv_grid_max),
                origin='lower', aspect='auto')
     plt.colorbar(label='Sliced Wasserstein Loss')
     plt.xlabel(f"{key2} ")
     plt.ylabel(f"{key1} ")
-    plt.title("Sliced Wasserstein Loss Landscape")
-    plt.savefig(os.path.join(run_dir, "plots/sw_landscape.png"))
+    plt.title(f"{config.objective.use_this_objective.capitalize()} Loss Landscape")
+    plt.savefig(os.path.join(run_dir, f"plots/{config.objective.use_this_objective}_landscape.png"))
     plt.clf()
 
 if __name__ == "__main__":

@@ -30,13 +30,36 @@ def compute_high_power_frac(arr, threshold):
 
 
 @dataclass
+class ByTrialConfig:
+    n_pixels_plot: int
+    dose_to_n_trials: dict[int, int]
+    dose_to_roughness: dict[int, float]
+
+
+@dataclass
+class EMDLandscapeConfig:
+    fname: str
+    average_over_trial: bool
+
+
+@dataclass
+class ByProjectionConfig:
+    emd_landscape: EMDLandscapeConfig
+    average_sw_landscape_over_trial: bool
+
+
+@dataclass
 class FullConfig:
     precomputed_landscape_paths: Tuple[str]
-    n_pixels_plot: int
     roughness_threshold: float
-    dose_to_roughness: dict[int, float]
-    dose_to_n_trials: dict[int, int]
-    roughness_trend_plotting_threshold: float
+    mode: str  
+    by_trial: ByTrialConfig
+    by_projection: ByProjectionConfig
+
+    def __post_init__(self):
+        valid_modes = ['by_trial', 'by_projection']
+        if self.mode not in valid_modes:
+            raise ValueError(f"Invalid mode: {self.mode}. Must be one of {valid_modes}.")
 
 
 def plot_data(roughness_trends_fname, landscapes_and_images_fname, dose_to_n_trials, dose_to_roughness, output_dir, n_pixels_plot):
@@ -133,61 +156,100 @@ def main(cfg: FullConfig):
     df = parse_runs(config.precomputed_landscape_paths)
     print(df)
 
-    roughness_trends_data = []
-    landscape_data = []
-    noise_dose_list = []
-    noisy_image_list = []
-    for noise_dose, df_group in df.groupby('noise_dose'):
-        noise_dose_list.append(noise_dose)
-        # group by noise_dose
-        sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_group.iterrows()]
+    if config.mode == 'by_projection':
 
-        # plot roughness trends
-        for idx, sw_landscape in enumerate(sw_landscape_loaded):
-            logger.info(f'Roughness metrics for n_pixels={df_group.iloc[idx]["sw_n_pixels"]}')
-            normalized = (sw_landscape - sw_landscape.mean()) / sw_landscape.std()
-            running_average_index = jnp.arange(1, normalized.shape[0]+1)
-            high_power_frac = jnp.stack([compute_high_power_frac(normalized[:i].mean(axis=0), config.roughness_threshold) for i in running_average_index])
-            roughness_trends_data.append(pd.DataFrame({
-                'noise_dose': noise_dose,
-                'n_pixels': df_group.iloc[idx]['sw_n_pixels'],
-                'n_projections': df_group.iloc[idx]['sw_n_projections'],
-                'high_power_frac': high_power_frac,
-                'running_average_index': running_average_index,
-                'dose': noise_dose,
-                'rotation_max_geodesic_angle_in_degrees': df_group.iloc[idx]['rotation_max_geodesic_angle_in_degrees'],
-                'rotation_min_geodesic_angle_in_degrees': df_group.iloc[idx]['rotation_min_geodesic_angle_in_degrees'],
-                'offset_x_in_angstroms_max': df_group.iloc[idx]['offset_x_in_angstroms_max'],
-                'offset_x_in_angstroms_min': df_group.iloc[idx]['offset_x_in_angstroms_min'],
-            }))
+        def zscore(arr):
+            return (arr - arr.mean()) / arr.std()
+        emd_landscape = jnp.load(config.by_projection.emd_landscape.fname)
+        if config.by_projection.emd_landscape.average_over_trial:
+            emd_landscape = emd_landscape.mean(axis=0)
+        emd_landscape = zscore(emd_landscape)
+        for noise_dose, df_group in df.groupby('noise_dose'):
+            for n_pixels, df_subgroup in df_group.groupby('sw_n_pixels'):
+                logger.info(f'Accuracy metrics for noise_dose={noise_dose}, n_pixels={n_pixels}')
+                sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_subgroup.iterrows()]
 
-        # plot averaged landscape
-        for idx, sw_landscape in enumerate(sw_landscape_loaded):
-            if df_group.iloc[idx]['sw_n_pixels'] == config.n_pixels_plot:
+                for idx, sw_landscape in enumerate(sw_landscape_loaded):
+                    if config.by_projection.average_sw_landscape_over_trial:
+                        sw_landscape = sw_landscape.mean(axis=0)
+                    logger.info(f' n_pixels={df_subgroup.iloc[idx]["sw_n_pixels"]}')
+                    skip_idxs = range(1, sw_landscape.shape[-1]//2)
+                    accuracy = []
+                    n_projections_list = []
+                    roughness = []
+                    for skip_idx in skip_idxs:
+                        downsampled = sw_landscape[:,:,::skip_idx]
+                        n_projections_list.append(downsampled.shape[-1])
+                        logger.info(f'downsampled shape: {downsampled.shape}')
+                        accuracy.append(jnp.linalg.norm(emd_landscape - zscore(downsampled.mean(-1))))
+                        # roughness.append(compute_high_power_frac(downsampled.mean(-1), config.roughness_threshold))
+                    plt.plot(n_projections_list, accuracy, marker='o', label=f'n_pixels={df_group.iloc[idx]["sw_n_pixels"]}')
+                plt.title(f'Accuracy to EMD landscape for noise dose={noise_dose}')
+                plt.xlabel('n_projections')
+                plt.ylabel('L2 error to EMD landscape (z-scored)')
+                plt.legend()
+                plt.savefig(os.path.join(run_dir, f'accuracy_to_emd_landscape_dose{noise_dose}.png'))
+                plt.clf()
+        return 
+    elif config.mode == 'by_trial':
+
+        roughness_trends_data = []
+        landscape_data = []
+        noise_dose_list = []
+        noisy_image_list = []
+        for noise_dose, df_group in df.groupby('noise_dose'):
+            noise_dose_list.append(noise_dose)
+            # group by noise_dose
+            sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_group.iterrows()]
+
+            # plot roughness trends
+            for idx, sw_landscape in enumerate(sw_landscape_loaded):
+                logger.info(f'Roughness metrics for n_pixels={df_group.iloc[idx]["sw_n_pixels"]}')
                 normalized = (sw_landscape - sw_landscape.mean()) / sw_landscape.std()
-                # averaged_landscape = normalized.mean(axis=0)
-                landscape_data.append(normalized)
-              
+                running_average_index = jnp.arange(1, normalized.shape[0]+1)
+                high_power_frac = jnp.stack([compute_high_power_frac(normalized[:i].mean(axis=0), config.roughness_threshold) for i in running_average_index])
+                roughness_trends_data.append(pd.DataFrame({
+                    'noise_dose': noise_dose,
+                    'n_pixels': df_group.iloc[idx]['sw_n_pixels'],
+                    'n_projections': df_group.iloc[idx]['sw_n_projections'],
+                    'high_power_frac': high_power_frac,
+                    'running_average_index': running_average_index,
+                    'dose': noise_dose,
+                    'rotation_max_geodesic_angle_in_degrees': df_group.iloc[idx]['rotation_max_geodesic_angle_in_degrees'],
+                    'rotation_min_geodesic_angle_in_degrees': df_group.iloc[idx]['rotation_min_geodesic_angle_in_degrees'],
+                    'offset_x_in_angstroms_max': df_group.iloc[idx]['offset_x_in_angstroms_max'],
+                    'offset_x_in_angstroms_min': df_group.iloc[idx]['offset_x_in_angstroms_min'],
+                }))
 
-        # noisy image
-        noisy_image_path = df_group.iloc[0]['noisy_image_path']
-        noisy_image = jnp.load(noisy_image_path)
-        noisy_image_list.append(noisy_image)
+            # plot averaged landscape
+            for idx, sw_landscape in enumerate(sw_landscape_loaded):
+                if df_group.iloc[idx]['sw_n_pixels'] == config.n_pixels_plot:
+                    normalized = (sw_landscape - sw_landscape.mean()) / sw_landscape.std()
+                    # averaged_landscape = normalized.mean(axis=0)
+                    landscape_data.append(normalized)
+                
 
-    # save data
-    roughness_trends_data_df = pd.concat(roughness_trends_data, ignore_index=True)
-    roughness_trends_fname = os.path.join(run_dir, f'roughness_trends.csv')
-    roughness_trends_data_df.to_csv(roughness_trends_fname, index=False)
-    landscapes_and_images_fname = os.path.join(run_dir, f'landscapes_and_images.npz')
-    jnp.savez(landscapes_and_images_fname, 
-              landscapes=jnp.stack(landscape_data),
-              noise_dose=jnp.array(noise_dose_list),
-              noisy_images=jnp.stack(noisy_image_list),
-              n_pixels_plot=config.n_pixels_plot,
-              )
-    
+            # noisy image
+            noisy_image_path = df_group.iloc[0]['noisy_image_path']
+            noisy_image = jnp.load(noisy_image_path)
+            noisy_image_list.append(noisy_image)
 
-    plot_data(roughness_trends_fname, landscapes_and_images_fname, config.dose_to_n_trials, config.dose_to_roughness, run_dir, config.n_pixels_plot)
+        # save data
+        roughness_trends_data_df = pd.concat(roughness_trends_data, ignore_index=True)
+        roughness_trends_fname = os.path.join(run_dir, f'roughness_trends.csv')
+        roughness_trends_data_df.to_csv(roughness_trends_fname, index=False)
+        landscapes_and_images_fname = os.path.join(run_dir, f'landscapes_and_images.npz')
+        jnp.savez(landscapes_and_images_fname, 
+                landscapes=jnp.stack(landscape_data),
+                noise_dose=jnp.array(noise_dose_list),
+                noisy_images=jnp.stack(noisy_image_list),
+                n_pixels_plot=config.n_pixels_plot,
+                )
+        
+
+        plot_data(roughness_trends_fname, landscapes_and_images_fname, config.dose_to_n_trials, config.dose_to_roughness, run_dir, config.n_pixels_plot)
+    else:
+        raise ValueError(f"Invalid mode: {config.mode}")
 
 
 if __name__ == "__main__":

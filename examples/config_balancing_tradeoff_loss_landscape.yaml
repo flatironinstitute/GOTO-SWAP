@@ -1,4 +1,5 @@
 objective:
+  use_this_objective: sw
   sliced_wasserstein:
     n_projections: ???
     n_pixels: ???
@@ -7,7 +8,10 @@ objective:
     # normalize_safely_epsilon: 1e-8
     # - n_projections: 30
     #   n_pixels: 30
-      
+  emd:
+    crop_to_box_size: 64
+    kwargs:
+      numItermax: 1000000
 landscape:
   # n_trials_per_point: 3
   # n_landscape_values: 4
