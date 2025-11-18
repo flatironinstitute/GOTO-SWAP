@@ -34,31 +34,33 @@ class FullConfig:
     precomputed_landscape_paths: Tuple[str]
     n_pixels_plot: int
     roughness_threshold: float
+    dose_to_roughness: dict[int, float]
     dose_to_n_trials: dict[int, int]
     roughness_trend_plotting_threshold: float
 
 
-def plot_data(roughness_trends_fname, landscapes_and_images_fname, roughness_trend_plotting_threshold, dose_to_n_trials, run_dir, n_pixels_plot):
+def plot_data(roughness_trends_fname, landscapes_and_images_fname, dose_to_n_trials, dose_to_roughness, output_dir, n_pixels_plot):
 
     roughness_trends_data_df = pd.read_csv(roughness_trends_fname)
     landscape_data = jnp.load(landscapes_and_images_fname)
 
     for noise_dose, df_dose_group in roughness_trends_data_df.groupby('noise_dose'):
         plt.figure()
-        for n_pixels, df_pixel_group in df_dose_group.groupby('n_pixels'):
-            label = 'n_pixels='+str(n_pixels)
-            plt.plot(df_pixel_group.running_average_index.values.tolist(), df_pixel_group.high_power_frac.values.tolist(), label=label)
+        for (n_pixels, n_projections), df_pixel_group in df_dose_group.groupby(['n_pixels', 'n_projections']):
+            label = f'n_pixels={n_pixels}'
+            plt.plot((n_pixels * n_projections * df_pixel_group.running_average_index.values).tolist(), 
+                     df_pixel_group.high_power_frac.values.tolist(), label=label)
+        plt.xscale('log')
         plt.title(f'Roughness trend for noise dose={noise_dose}')
-        plt.xlabel('Number of averaged trials')
+        plt.xlabel('Time per SW evaluation (n_trials x n_projections x n_pixels, arbitrary units)')
         plt.ylabel('Landscape roughness (high-freq power fraction)')
-        plt.axhline(y=roughness_trend_plotting_threshold, color='gray', linestyle='--', )
-        plt.axvline(x=dose_to_n_trials[int(noise_dose)], color='gray', linestyle='--', )
+        plt.axhline(y=dose_to_roughness[int(noise_dose)], color='tab:blue', linestyle='--', alpha=0.5)
+        plt.axvline(x=n_pixels_plot * n_projections * dose_to_n_trials[int(noise_dose)], color='tab:blue', linestyle='--', alpha=0.5)
         plt.legend()
         plt.ylim(0, 1)
-        plt.savefig(os.path.join(run_dir, f'roughness_trends_dose{noise_dose}.png'))
+        plt.savefig(os.path.join(output_dir, f'roughness_trends_dose{noise_dose}.png'))
         plt.clf()
 
-    landscape_data = jnp.load(os.path.join(run_dir, f'landscapes_and_images.npz'))
     landscapes = landscape_data['landscapes']
     noise_dose_array = landscape_data['noise_dose']
     noisy_images = landscape_data['noisy_images']
@@ -81,14 +83,14 @@ def plot_data(roughness_trends_fname, landscapes_and_images_fname, roughness_tre
         plt.title(f'Averaged landscape n_pixels={n_pixels_plot} | dose={noise_dose} | n_trials={dose_to_n_trials[int(noise_dose)]}')
         plt.xlabel('Offset x (angstroms)')
         plt.ylabel('Rotation (geodesic distance in degrees)')
-        plt.savefig(os.path.join(run_dir, f'averaged_landscape_n_pixels_{n_pixels_plot}_dose{noise_dose}.png'))
+        plt.savefig(os.path.join(output_dir, f'averaged_landscape_n_pixels_{n_pixels_plot}_dose{noise_dose}.png'))
         plt.clf()
 
         plt.figure()
         plt.imshow(noisy_image, cmap='gray_r')
         plt.colorbar()
         plt.title(f'Noisy image dose={noise_dose}')
-        plt.savefig(os.path.join(run_dir, f'noisy_image_dose{noise_dose}.png'))
+        plt.savefig(os.path.join(output_dir, f'noisy_image_dose{noise_dose}.png'))
         plt.clf()
 
 
@@ -149,6 +151,7 @@ def main(cfg: FullConfig):
             roughness_trends_data.append(pd.DataFrame({
                 'noise_dose': noise_dose,
                 'n_pixels': df_group.iloc[idx]['sw_n_pixels'],
+                'n_projections': df_group.iloc[idx]['sw_n_projections'],
                 'high_power_frac': high_power_frac,
                 'running_average_index': running_average_index,
                 'dose': noise_dose,
@@ -184,7 +187,7 @@ def main(cfg: FullConfig):
               )
     
 
-    plot_data(roughness_trends_fname, landscapes_and_images_fname, config.roughness_trend_plotting_threshold, config.dose_to_n_trials, run_dir, config.n_pixels_plot)
+    plot_data(roughness_trends_fname, landscapes_and_images_fname, config.dose_to_n_trials, config.dose_to_roughness, run_dir, config.n_pixels_plot)
 
 
 if __name__ == "__main__":

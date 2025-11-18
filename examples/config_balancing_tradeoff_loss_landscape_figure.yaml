@@ -31,12 +31,18 @@ precomputed_landscape_paths:
   - 2025-11-16/13-48-20/
 
 
-n_pixels_plot: 1000
+n_pixels_plot: 30
 roughness_threshold: 0.25
 roughness_trend_plotting_threshold: 0.25
+dose_to_roughness:
+  30: 0.41132426
+  100: 0.2190056
+  300: 0.12872206
+  1000: 0.07471346
+  3000: 0.061516292
 dose_to_n_trials:
-  30: 99
-  100: 27
-  300: 14
-  1000: 8
-  3000: 9
+  30: 100
+  100: 100
+  300: 100
+  1000: 100
+  3000: 100

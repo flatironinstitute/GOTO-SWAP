@@ -3,6 +3,7 @@ objective:
     n_projections: ???
     n_pixels: ???
     random_seed: 42
+    n_projections_chunk_size: ${objective.sliced_wasserstein.n_projections}  # set to n_projections for no chunking
     # normalize_safely_epsilon: 1e-8
     # - n_projections: 30
     #   n_pixels: 30

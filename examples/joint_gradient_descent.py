@@ -214,7 +214,7 @@ def sw_sorted_jax_differentiable(image_1, image_2, grid, n_projections, n_pixels
         return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
 
     losses = jax.vmap(loss_per_theta)(thetas, keys)
-    return losses.mean()
+    return losses
     
 
 def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, noise, key):
@@ -224,7 +224,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         return jnp.linalg.norm(image_1 - image_2)
 
     if use_this_objective == 'sw':
-        return sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key)
+        return sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key).mean()
     elif use_this_objective == 'l2':
         return l2_loss(noise.dose*(image_1 + noise.background)/noise.dose, image_ref/noise.dose) # normalize by dose to not affect learning rate
 

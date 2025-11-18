@@ -46,7 +46,13 @@ class SlicedWassersteinConfig:
     n_projections: int
     n_pixels: int
     random_seed: int
+    n_projections_chunk_size: int
     normalize_safely_epsilon: float = 1e-12
+
+    # post init for n_projections divisible by chunk size
+    def __post_init__(self):
+        if self.n_projections % self.n_projections_chunk_size == 0:
+            raise ValueError("n_projections must be divisible by n_projections_chunk_size")
 
 @dataclass
 class ObjectiveConfig:
@@ -238,7 +244,30 @@ def main(cfg: FullConfig):
     cv_grid = cv_dict[key1]
     other_grid = cv_dict[key2]
 
-    def eval_sw(cv, other, key):
+
+    def sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta):
+    
+        v_weights = image_1.flatten()
+        u_weights = image_2.flatten()
+
+        def loss_per_theta(theta, key):
+            project = jnp.tensordot(grid, jnp.array([jnp.cos(theta), jnp.sin(theta)]), axes=1).flatten()
+            perm = jax.random.permutation(key, len(project))[:n_pixels]
+            x_ab = project[perm]
+            sort_idx = jnp.argsort(x_ab)
+            x_ab_sorted = x_ab[sort_idx]
+            a_sorted = u_weights[perm][sort_idx] + normalize_safely_epsilon
+            b_sorted = v_weights[perm][sort_idx] + normalize_safely_epsilon
+            return emd_1d_sorted_jax_differentiable(x_ab_sorted, x_ab_sorted, a_sorted / a_sorted.sum(), b_sorted / b_sorted.sum())
+
+        return loss_per_theta(theta, key)
+
+    def _sw_sorted_jax_differentiable(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, theta, key):
+        return sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta)
+ 
+
+
+    def eval_sw_single_theta(cv, other, theta, key):
         wxyz = pose.wxyz
         defocus = config.setup.ctf.defocus_in_angstroms
         offset_x = config.setup.pose.translation.offset_x_in_angstroms
@@ -272,46 +301,51 @@ def main(cfg: FullConfig):
             offset_x_in_angstroms=offset_x,
             offset_y_in_angstroms=offset_y,
         )
-        return sw_sorted_jax_differentiable(
+        return _sw_sorted_jax_differentiable(
             config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background,
             proj_obs_noisy,
             grid,
-            n_projections,
             n_pixels,
             sliced_wasserstein.normalize_safely_epsilon,
+            theta,
             key,
         )
+    thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False) 
 
-    vmap_size = len(cv_grid) * len(other_grid)
-    vmap_shape = (len(cv_grid), len(other_grid))
-
-    # vmap correctly over cv and other
-    eval_sw_vmapped = jax.vmap(
-        jax.vmap(eval_sw, in_axes=(None, 0, 0)),  # inner: over OTHER axis=0
-        in_axes=(0, None, 0)                      # outer: over CV axis=0
+    theta_vmap = jax.vmap(
+        eval_sw_single_theta,
+        in_axes=(None, None, 0, 0)   # cv, other, theta_i, key_i
     )
 
-    eval_sw_vmapped_jit = jax.jit(eval_sw_vmapped)
+    inner_vmap = jax.vmap(
+        theta_vmap,
+        in_axes=(None, 0, None, 0)
+    )
 
-    # multiple trials
+    full_vmap = jax.vmap(
+        inner_vmap,
+        in_axes=(0, None, None, 0)
+    )
+    full_vmap_jit = jax.jit(full_vmap)
+
+    thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False)
+
+    vmap_shape = (len(cv_grid), len(other_grid), len(thetas))   
+    vmap_size  = len(cv_grid) * len(other_grid) * len(thetas)      
+
     key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
     rep_keys = jax.random.split(key_main, config.landscape.n_trials)
 
     def run_trial(k):
         ks = jax.random.split(k, vmap_size).reshape(vmap_shape + (2,))
-        return eval_sw_vmapped_jit(cv_grid, other_grid, ks)
-
-    # Chunk the vmapped trials to avoid huge peak device allocations.
-    # Target roughly a 10x reduction in peak memory by splitting trials into
-    # ~10 chunks. This processes chunks sequentially on the device and
-    # moves each completed chunk to host (downcast to float32) before
-    # proceeding, which greatly reduces device memory pressure.
+        return full_vmap_jit(cv_grid, other_grid, thetas, ks)
+    
     n_trials = config.landscape.n_trials
-    target_reduction = config.landscape.n_trials_chunks
-    chunk_size = max(1, (n_trials + target_reduction - 1) // target_reduction)
+    n_chunks = config.landscape.n_trials_chunks
+    chunk_size = (n_trials + n_chunks - 1) // n_chunks
 
-    # jit the vmapped run for a chunk
     vmapped_run_trial = jax.jit(jax.vmap(run_trial))
+
 
     chunks = []
     total_chunks = (n_trials + chunk_size - 1) // chunk_size
@@ -325,8 +359,33 @@ def main(cfg: FullConfig):
         res_chunk_host = jax.device_get(res_chunk).astype(np.float32)
         chunks.append(res_chunk_host)
 
-    sw_landscapes_host = np.concatenate(chunks, axis=0)
-    np.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
+    sw_landscapes_host = jnp.concatenate(chunks, axis=0)
+    print(f"sw_landscapes_host shape: {sw_landscapes_host.shape}")
+    
+
+    jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
+    sw_landscapes_host = sw_landscapes_host.mean(axis=-1)
+    if key1 == 'rotation':
+        cv_grid_min = config.landscape.landscape_variables['rotation']['min_geodesic_angle_in_degrees']
+        cv_grid_max = config.landscape.landscape_variables['rotation']['max_geodesic_angle_in_degrees']
+    else:
+        cv_grid_min = cv_grid.min()
+        cv_grid_max = cv_grid.max()
+    if key2 == 'rotation':
+        other_grid_min = config.landscape.landscape_variables['rotation']['min_geodesic_angle_in_degrees']
+        other_grid_max = config.landscape.landscape_variables['rotation']['max_geodesic_angle_in_degrees']
+    else:
+        other_grid_min = other_grid.min()
+        other_grid_max = other_grid.max()
+    plt.imshow(sw_landscapes_host.mean(axis=0), cmap='jet',
+               extent=(other_grid_min, other_grid_max, cv_grid_min, cv_grid_max),
+               origin='lower', aspect='auto')
+    plt.colorbar(label='Sliced Wasserstein Loss')
+    plt.xlabel(f"{key2} ")
+    plt.ylabel(f"{key1} ")
+    plt.title("Sliced Wasserstein Loss Landscape")
+    plt.savefig(os.path.join(run_dir, "plots/sw_landscape.png"))
+    plt.clf()
 
 if __name__ == "__main__":
     main()
