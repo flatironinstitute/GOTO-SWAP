@@ -330,38 +330,51 @@ def main(cfg: FullConfig):
 
     thetas = jnp.linspace(0, jnp.pi, n_projections, endpoint=False)
 
-    vmap_shape = (len(cv_grid), len(other_grid), len(thetas))   
-    vmap_size  = len(cv_grid) * len(other_grid) * len(thetas)      
-
-    key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
-    rep_keys = jax.random.split(key_main, config.landscape.n_trials)
-
-    def run_trial(k):
-        ks = jax.random.split(k, vmap_size).reshape(vmap_shape + (2,))
-        return full_vmap_jit(cv_grid, other_grid, thetas, ks)
-    
+    # Chunk over theta to limit peak device memory.
     n_trials = config.landscape.n_trials
     n_chunks = config.landscape.n_trials_chunks
-    chunk_size = (n_trials + n_chunks - 1) // n_chunks
+    trial_chunk_size = (n_trials + n_chunks - 1) // n_chunks
 
-    vmapped_run_trial = jax.jit(jax.vmap(run_trial))
+    key_main = jax.random.PRNGKey(sliced_wasserstein.random_seed)
+    rep_keys = jax.random.split(key_main, n_trials)
 
+    theta_chunk_size = sliced_wasserstein.n_projections_chunk_size
+    theta_results_parts = []  # will collect chunks along theta axis
 
-    chunks = []
-    total_chunks = (n_trials + chunk_size - 1) // chunk_size
-    # iterate with a progress bar (tqdm) if available; otherwise plain loop
-    for i in tqdm(range(0, n_trials, chunk_size), total=total_chunks, desc="SW chunks", unit="chunk"):
-        keys_chunk = rep_keys[i : i + chunk_size]
-        res_chunk = vmapped_run_trial(keys_chunk)
-        # ensure device computation finished before transfer
-        res_chunk = res_chunk.block_until_ready()
-        # transfer to host and downcast to float32 to reduce host memory
-        res_chunk_host = jax.device_get(res_chunk).astype(np.float32)
-        chunks.append(res_chunk_host)
+    # iterate over theta chunks
+    for t_start in range(0, len(thetas), theta_chunk_size):
+        t_end = min(t_start + theta_chunk_size, len(thetas))
+        thetas_chunk = thetas[t_start:t_end]
+        n_theta_chunk = len(thetas_chunk)
 
-    sw_landscapes_host = jnp.concatenate(chunks, axis=0)
+        # build a per-trial runner that creates per-(cv,other,theta) keys for this theta chunk
+        def run_trial_theta_chunk(k):
+            vmap_shape_chunk = (len(cv_grid), len(other_grid), n_theta_chunk)
+            ks = jax.random.split(k, vmap_shape_chunk[0] * vmap_shape_chunk[1] * vmap_shape_chunk[2])
+            ks = ks.reshape(vmap_shape_chunk + (2,))
+            return full_vmap(cv_grid, other_grid, thetas_chunk, ks)
+
+        # vmapped + jitted over trials for this theta chunk (compiled for the chunk shape)
+        vmapped_run_trial_for_chunk = jax.jit(jax.vmap(run_trial_theta_chunk))
+
+        # run over trial-chunks, transfer each chunk to host to free device memory between iterations
+        trial_chunks = []
+        total_trial_chunks = (n_trials + trial_chunk_size - 1) // trial_chunk_size
+        for i in tqdm(range(0, n_trials, trial_chunk_size), total=total_trial_chunks,
+                      desc=f"Theta {t_start}:{t_end}", unit="trial-chunk"):
+            keys_chunk = rep_keys[i : i + trial_chunk_size]
+            res_chunk = vmapped_run_trial_for_chunk(keys_chunk)   # shape: (chunk_size, n_cv, n_other, n_theta_chunk)
+            res_chunk.block_until_ready()
+            res_chunk_host = jax.device_get(res_chunk).astype(np.float32)
+            trial_chunks.append(res_chunk_host)
+
+        # concatenate trial chunks -> (n_trials, n_cv, n_other, n_theta_chunk)
+        chunked_by_trials = np.concatenate(trial_chunks, axis=0)
+        theta_results_parts.append(chunked_by_trials)
+
+    # concatenate along theta axis -> (n_trials, n_cv, n_other, n_projections)
+    sw_landscapes_host = np.concatenate(theta_results_parts, axis=-1)
     print(f"sw_landscapes_host shape: {sw_landscapes_host.shape}")
-    
 
     jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
     sw_landscapes_host = sw_landscapes_host.mean(axis=-1)
