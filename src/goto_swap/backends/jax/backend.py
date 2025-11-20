@@ -73,8 +73,8 @@ class JAXBackend(BackendInterface):
         rotated_x_true = rotate(x_true[..., None], in_plane_rotations)[..., 0]
 
         # Split in positive and negative
-        rotated_x_pos, rotated_x_neg = nnx.relu(rotated_x), -nnx.relu(-rotated_x)
-        rotated_x_true_pos, rotated_x_true_neg = nnx.relu(rotated_x_true), -nnx.relu(-rotated_x_true)
+        rotated_x_pos, rotated_x_neg = nnx.relu(rotated_x), nnx.relu(-rotated_x)
+        rotated_x_true_pos, rotated_x_true_neg = nnx.relu(rotated_x_true), nnx.relu(-rotated_x_true)
 
         # 1D strips
         strips_x_pos, strips_x_neg = rotated_x_pos.sum(axis=-1), rotated_x_neg.sum(axis=-1)  # (B, N, n)
