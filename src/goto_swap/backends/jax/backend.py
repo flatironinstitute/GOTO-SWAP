@@ -24,7 +24,8 @@ class JAXBackend(BackendInterface):
         self, 
         x: jnp.ndarray, 
         x_true: jnp.ndarray, 
-        num_rotations: int = 100
+        num_rotations: int = 100,
+        eps: float = 1e-8,
     ) -> jnp.ndarray:
         """
         Compute Wasserstein distance loss between images using sliced Wasserstein.
@@ -80,8 +81,7 @@ class JAXBackend(BackendInterface):
         strips_x_true_pos, strips_x_true_neg = rotated_x_true_pos.sum(axis=-1), rotated_x_true_neg.sum(axis=-1)  # (B, N, n)
 
         # Wasserstein distance (based on code: https://github.com/flatironinstitute/Cryo-EM-Heterogeneity-Challenge-1/blob/sliced_w/src/cryo_challenge/map_to_map/sliced_wasserstein/pixel_strip.py#L49)
-        def wasserstein_over_one_strip(a, b):
-            eps = 1e-8
+        def wasserstein_over_one_strip(a, b, eps):
             a = a / (a.sum(axis=-1, keepdims=True) + eps)  # (B, n)
             b = b / (b.sum(axis=-1, keepdims=True) + eps)  # (B, n)
 
@@ -95,9 +95,9 @@ class JAXBackend(BackendInterface):
         
         wasserstein_over_strips = jax.vmap(wasserstein_over_one_strip, in_axes=(1, 1))  # (B, N)
 
-        w_pos = wasserstein_over_strips(strips_x_pos, strips_x_true_pos).mean(axis=0)
-        w_neg = wasserstein_over_strips(strips_x_neg, strips_x_true_neg).mean(axis=0)
-        w = (w_pos + w_neg).mean()
+        w_pos = wasserstein_over_strips(strips_x_pos, strips_x_true_pos, eps)#.mean(axis=0)
+        w_neg = wasserstein_over_strips(strips_x_neg, strips_x_true_neg, eps)#.mean(axis=0)
+        w = (w_pos + w_neg).mean(1)
 
         return w
     
