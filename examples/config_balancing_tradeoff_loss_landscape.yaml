@@ -1,5 +1,5 @@
 objective:
-  use_this_objective: sw_random_pixels
+  use_this_objective: sw_cdf
   sliced_wasserstein_random_pixels:
     n_projections: ???
     n_pixels: ???
@@ -9,6 +9,8 @@ objective:
   sliced_wasserstein_cdf:
     n_projections: 100
     normalize_safely_epsilon: 1e-8
+    crop_to_box_size: 128
+
   emd:
     crop_to_box_size: 64
     kwargs:
@@ -16,7 +18,7 @@ objective:
 landscape:
   # n_trials_per_point: 3
   # n_landscape_values: 4
-  n_trials: ???
+  n_trials: 1
   n_trials_chunks: 10
   landscape_variables:
     # cv:

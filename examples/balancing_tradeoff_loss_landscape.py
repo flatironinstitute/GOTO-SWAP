@@ -43,7 +43,8 @@ class LandscapeConfig:
 @dataclass
 class SlicedWassersteinCdfConfig:
     n_projections: int
-    normalize_safely_epsilon: float = 1e-12
+    crop_to_box_size: int
+    normalize_safely_epsilon: float = 1e-8
 
 
 @dataclass
@@ -228,7 +229,7 @@ def main(cfg: FullConfig):
                 var_config['max_value'],
                 var_config['n_points'],
             )
-    print(f"cv_dict: {cv_dict}")
+    logger.info(f"cv_dict: {cv_dict}")
 
     key1, key2 = config.landscape.landscape_variables.keys()
     cv_grid = cv_dict[key1]
@@ -310,11 +311,65 @@ def main(cfg: FullConfig):
         jnp.save(os.path.join(run_dir, "data/emd_landscape.npy"), emd_landscape)
         landscape_for_plotting = emd_landscape
 
+
+    elif config.objective.use_this_objective == 'sw_cdf':
+        sliced_wasserstein = config.objective.sliced_wasserstein_cdf
+        H = W = config.objective.emd.crop_to_box_size
+        n_pix = proj_obs_noisy.shape[0]
+        crop_start_idx, crop_end_idx = (n_pix - H)//2, (n_pix + H)//2
+        img1 = proj_obs_noisy[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
+
+        from goto_swap import get_backend
+        jax_backend = get_backend("jax")
+        sw_cdf_landscape = jnp.zeros((1, len(cv_grid), len(other_grid), sliced_wasserstein.n_projections))
+        for i, cv in enumerate(tqdm(cv_grid, desc="Computing SW CDF landscape")):
+            for j, other in enumerate(other_grid):
+
+                wxyz = pose.wxyz
+                defocus = config.setup.ctf.defocus_in_angstroms
+                offset_x = config.setup.pose.translation.offset_x_in_angstroms
+                offset_y = config.setup.pose.translation.offset_y_in_angstroms
+                cv_scalar = config.setup.cv.value
+                if 'rotation' == key1:
+                    wxyz = cv
+                elif 'defocus' == key1:
+                    defocus = cv
+                elif 'offset_x_in_angstroms' == key1:
+                    offset_x = cv
+                elif 'offset_y_in_angstroms' == key1:
+                    offset_y = cv
+                elif 'cv' == key1:
+                    cv = cv
+                if 'rotation' == key2:
+                    wxyz = other
+                elif 'defocus' == key2:
+                    defocus = other
+                elif 'offset_x_in_angstroms' == key2:
+                    offset_x = other
+                elif 'offset_y_in_angstroms' == key2:
+                    offset_y = other
+                elif 'cv' == key2:
+                    cv = other
+                new_image_model = apply_all_cv(
+                    image_model,
+                    wxyz=wxyz,
+                    cv_scalar=cv_scalar,
+                    defocus_scalar=defocus,
+                    offset_x_in_angstroms=offset_x,
+                    offset_y_in_angstroms=offset_y,
+                )
+                proj_simulated = config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background
+                img2 = proj_simulated[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
+                assert img2.shape == (H, W)
+                sw_1d_cdf_values = jax_backend.wasserstein_distance_loss_images(img1.astype(jnp.float32).reshape(1, H, W), img2.astype(jnp.float32).reshape(1, H, W), num_rotations=sliced_wasserstein.n_projections)
+                sw_cdf_landscape = sw_cdf_landscape.at[:,i,j].set(sw_1d_cdf_values)  
+        jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_cdf_landscape)
+        landscape_for_plotting = jnp.sqrt(sw_cdf_landscape.mean(axis=(0, -1)))
+
     elif config.objective.use_this_objective =='sw_random_pixels':
         sliced_wasserstein = config.objective.sliced_wasserstein_random_pixels
-        print(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
+        logger.info(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
         n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
-        # key = jax.random.PRNGKey(idx)
 
         def sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta):
         
@@ -449,7 +504,7 @@ def main(cfg: FullConfig):
 
         # concatenate along theta axis -> (n_trials, n_cv, n_other, n_projections)
         sw_landscapes_host = np.concatenate(theta_results_parts, axis=-1)
-        print(f"sw_landscapes_host shape: {sw_landscapes_host.shape}")
+        logger.info(f"sw_landscapes_host shape: {sw_landscapes_host.shape}")
 
         jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_landscapes_host)
         landscape_for_plotting = sw_landscapes_host.mean(axis=(0, -1))
@@ -469,7 +524,7 @@ def main(cfg: FullConfig):
     plt.imshow(landscape_for_plotting, cmap='jet',
                extent=(other_grid_min, other_grid_max, cv_grid_min, cv_grid_max),
                origin='lower', aspect='auto')
-    plt.colorbar(label='Sliced Wasserstein Loss')
+    plt.colorbar(label=f"{config.objective.use_this_objective.capitalize()}")
     plt.xlabel(f"{key2} ")
     plt.ylabel(f"{key1} ")
     plt.title(f"{config.objective.use_this_objective.capitalize()} Loss Landscape")

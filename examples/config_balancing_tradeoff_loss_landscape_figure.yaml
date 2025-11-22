@@ -33,6 +33,7 @@ precomputed_landscape_paths:
   - 2025-11-18/16-46-46
   - 2025-11-18/16-49-36
   - 2025-11-18/17-00-38
+  - 2025-11-22/00-16-48 # cdf
 roughness_threshold: 0.25
 
 mode: by_projection
@@ -47,13 +48,13 @@ by_projection:
     dpi: 300
     marker: o
     palette: Oranges_d
-    axvline: 
-      - label: compute_cost
-        value: 9712
-    axhline: 
-    - label: accuracy
-      value: 15.988581657409668
-  n_projections_smaller_list_size: 50
+    # axvline: 
+    #   - label: compute_cost
+    #     value: 9712
+    # axhline: 
+    # - label: accuracy
+    #   value: 15.988581657409668
+  n_projections_smaller_list_size: 30
 
 by_trial:
   n_pixels_plot: 30

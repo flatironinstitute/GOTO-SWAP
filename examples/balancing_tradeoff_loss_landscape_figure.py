@@ -155,9 +155,19 @@ def main(cfg: FullConfig):
             config = OmegaConf.load(config_fname)
             noise_background = config.setup.noise.background
             noise_dose = config.setup.noise.dose
-            sw_n_pixels = config.objective.sliced_wasserstein.n_pixels
-            sw_n_projections = config.objective.sliced_wasserstein.n_projections
+            if config.objective.use_this_objective == 'sw_random_pixels':
+                sw_n_pixels = config.objective.sliced_wasserstein_random_pixels.n_pixels
+                sw_n_projections = config.objective.sliced_wasserstein_random_pixels.n_projections
+            elif config.objective.use_this_objective == 'sw':
+                sw_n_pixels = config.objective.sliced_wasserstein.n_pixels
+                sw_n_projections = config.objective.sliced_wasserstein.n_projections
+            elif config.objective.use_this_objective == 'sw_cdf':
+                sw_n_pixels = 1
+                sw_n_projections = config.objective.sliced_wasserstein_cdf.n_projections
+            else:
+                raise ValueError(f"Invalid objective: {config.objective.use_this_objective}")
             d_list.append({
+                'use_this_objective': config.objective.use_this_objective,
                 'noise_background': noise_background,
                 'noise_dose': noise_dose,
                 'sw_n_pixels': sw_n_pixels,
@@ -188,7 +198,7 @@ def main(cfg: FullConfig):
         def compute_accuacy_and_roughness_and_make_single_plots(df, outdir):
             run_dir = outdir
             df_list = []
-            for noise_dose, df_group in df.groupby('noise_dose'):
+            for (use_this_objective, noise_dose), df_group in df.groupby(['use_this_objective', 'noise_dose']):
                 for n_pixels, df_subgroup in df_group.groupby('sw_n_pixels'):
                     logger.info(f'Accuracy metrics for noise_dose={noise_dose}, n_pixels={n_pixels}')
                     sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_subgroup.iterrows()]
@@ -201,6 +211,7 @@ def main(cfg: FullConfig):
                     for idx, sw_landscape in enumerate(sw_landscape_loaded):
                         if config.by_projection.average_sw_landscape_over_trial:
                             sw_landscape = sw_landscape.mean(axis=0)
+                        
 
                         accuracy = []
                         roughness = []
@@ -208,7 +219,6 @@ def main(cfg: FullConfig):
 
 
                         n_projections = sw_landscape.shape[-1]
-                        # n_projections_smaller_list = range(1, n_projections)
                         average_landacapes = []
                         n_projections_smaller_list = jnp.exp(jnp.linspace(jnp.log(3), jnp.log(n_projections), num=config.by_projection.n_projections_smaller_list_size)).astype(int)
                         for n_projections_smaller in tqdm(n_projections_smaller_list, desc="Downsampling projections", unit="n_projections"):
@@ -218,6 +228,8 @@ def main(cfg: FullConfig):
                             n_projections_list.append(len(idxs))
 
                             avg_land = downsampled.mean(-1)
+                            if use_this_objective == 'sw_cdf':
+                                avg_land = np.sqrt(avg_land)  # SW^2 CDF to SW^2
                             accuracy.append(jnp.linalg.norm(emd_landscape - zscore(avg_land)))
                             average_landacapes.append(avg_land)
                             roughness.append(compute_high_power_frac(avg_land, config.roughness_threshold))
@@ -232,7 +244,8 @@ def main(cfg: FullConfig):
                         "n_projections": n_projections_list,
                         "average_landacapes": average_landacapes,
                         "accuracy": accuracy,
-                        "roughness": roughness
+                        "roughness": roughness,
+                        "use_this_objective": use_this_objective,
                     }))
                     
 
@@ -250,7 +263,7 @@ def main(cfg: FullConfig):
                     plt.ylabel('L2 error to EMD landscape (z-scored)')
                     plt.legend()
                     plt.xscale('log')
-                    fname_acc = os.path.join(run_dir, f"accuracy_dose{noise_dose}_npix{n_pixels}.png")
+                    fname_acc = os.path.join(run_dir, f"accuracy_dose{noise_dose}_objective{use_this_objective}_npix{n_pixels}.png")
                     plt.savefig(fname_acc, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
                     plt.close()
 
@@ -266,7 +279,7 @@ def main(cfg: FullConfig):
                     plt.ylabel('Roughness')
                     plt.legend()
                     plt.xscale('log')
-                    fname_rough = os.path.join(run_dir, f"roughness_dose{noise_dose}_npix{n_pixels}.png")
+                    fname_rough = os.path.join(run_dir, f"roughness_dose{noise_dose}_objective{use_this_objective}_npix{n_pixels}.png")
                     plt.savefig(fname_rough, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
                     plt.close()
 
@@ -282,13 +295,13 @@ def main(cfg: FullConfig):
                                               kind='scatter', 
                                               color='k',
                                               s=25,)
-                            g.set_axis_labels(r"$SW_2^2$ Landscape", r"$W_2^2$ Landscape values")
+                            g.set_axis_labels(r"$SW_2$ Landscape", r"$W_2$ Landscape values")
                             # Set x & y ticks
                             ticks = [-2, -1, 0, 1, 2]
                             g.ax_joint.set_xticks(ticks)
                             g.ax_joint.set_yticks(ticks)
                             plt.suptitle(f'Joint plot SW vs EMD landscape (dose={noise_dose}, n_pixels={npix}, n_projections={n_projections_small})')
-                            fname_joint = os.path.join(run_dir, f"jointplot_dose{noise_dose}_npix{npix}_np{n_projections_small}.png")
+                            fname_joint = os.path.join(run_dir, f"jointplot_dose{noise_dose}_objective{use_this_objective}_npix{npix}_np{n_projections_small}.png")
                             plt.savefig(fname_joint, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
                             plt.close()
             
@@ -313,7 +326,7 @@ def main(cfg: FullConfig):
                             plt.title(f'Averaged landscape n_pixels={npix} | dose={noise_dose} | n_projections={n_projections_small}')
                             plt.xlabel('Offset x (angstroms)')
                             plt.ylabel('Rotation (geodesic distance in degrees)')
-                            fname_landscape = os.path.join(run_dir, f"landscape_dose{noise_dose}_npix{npix}_np{n_projections_small}.png")
+                            fname_landscape = os.path.join(run_dir, f"landscape_dose{noise_dose}_objective{use_this_objective}_npix{npix}_np{n_projections_small}.png")
                             plt.savefig(fname_landscape, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
                             plt.close()
 
@@ -347,13 +360,15 @@ def main(cfg: FullConfig):
                     palette=palette
                 )
                 plt.xscale('log')
-                for axvline_dict in axvline:
-                    if axvline_dict['label'] == x:
-                        plt.axvline(x=axvline_dict['value'], color='gray', linestyle='--', alpha=0.5)
-                for axhline_dict in axhline:
-                    if axhline_dict['label'] == y:
-                        plt.axhline(y=axhline_dict['value'], color='gray', linestyle='--', alpha=0.5)
-                
+                if axvline is not None: 
+                    for axvline_dict in axvline:
+                        if axvline_dict['label'] == x:
+                            plt.axvline(x=axvline_dict['value'], color='gray', linestyle='--', alpha=0.5)
+                if axhline is not None:
+                    for axhline_dict in axhline:
+                        if axhline_dict['label'] == y:
+                            plt.axhline(y=axhline_dict['value'], color='gray', linestyle='--', alpha=0.5)
+                    
                 plt.savefig(os.path.join(out_dir, f'by_projection_{x}_vs_{y}.png'), dpi=dpi, bbox_inches='tight')
                 plt.clf()
         plot_compute_accuracy_tradeoff(df_roughness_accuracy, 
