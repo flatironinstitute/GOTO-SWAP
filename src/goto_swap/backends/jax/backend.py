@@ -4,7 +4,6 @@ JAX backend implementation for GOTO-SWAP.
 
 import jax
 import jax.numpy as jnp
-from functools import partial
 import dm_pix
 from flax import nnx
 
@@ -43,8 +42,8 @@ class JAXBackend(BackendInterface):
         """
         # Soft circular mask
         Y, X = jnp.ogrid[:x.shape[1], :x.shape[2]]
-        dist_from_center = jnp.sqrt((X - 0.5 * x.shape[0]) ** 2 + (Y - 0.5 * x.shape[1]) ** 2)
-        mask = (dist_from_center <= 0.5 * x.shape[0]).astype(jnp.float32)[None, ..., None]
+        dist_from_center = jnp.sqrt((X - 0.5 * x.shape[1]) ** 2 + (Y - 0.5 * x.shape[2]) ** 2)
+        mask = (dist_from_center <= 0.5 * max(x.shape[1], x.shape[2])).astype(jnp.float32)[None, ..., None]
         mask = dm_pix.gaussian_blur(mask, 1.0, kernel_size=5)[..., 0]
 
         # Apply soft mask to images
@@ -65,8 +64,8 @@ class JAXBackend(BackendInterface):
         rotated_x_true = rotate(x_true[..., None], in_plane_rotations)[..., 0]
 
         # Split in positive and negative
-        rotated_x_pos, rotated_x_neg = nnx.relu(rotated_x), -nnx.relu(-rotated_x)
-        rotated_x_true_pos, rotated_x_true_neg = nnx.relu(rotated_x_true), -nnx.relu(-rotated_x_true)
+        rotated_x_pos, rotated_x_neg = nnx.relu(rotated_x), nnx.relu(-rotated_x)
+        rotated_x_true_pos, rotated_x_true_neg = nnx.relu(rotated_x_true), nnx.relu(-rotated_x_true)
 
         # 1D strips
         strips_x_pos, strips_x_neg = rotated_x_pos.sum(axis=-1), rotated_x_neg.sum(axis=-1)  # (B, N, n)
@@ -90,7 +89,7 @@ class JAXBackend(BackendInterface):
 
         w_pos = wasserstein_over_strips(strips_x_pos, strips_x_true_pos).mean(axis=0)
         w_neg = wasserstein_over_strips(strips_x_neg, strips_x_true_neg).mean(axis=0)
-        w = (w_pos + w_neg).mean()
+        w = (w_pos + w_neg)#.mean()
 
         return w
     
