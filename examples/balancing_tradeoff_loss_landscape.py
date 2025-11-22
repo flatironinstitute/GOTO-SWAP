@@ -28,9 +28,7 @@ from tqdm import tqdm
 
 @dataclass
 class LandscapeConfig:
-    # n_trials_per_point: int 
-    # n_landscape_values: int
-    landscape_variables: dict[str, dict[str, Any]] #dict[str, dict[str, Union[float, list[float]]]]
+    landscape_variables: dict[str, dict[str, Any]] 
     n_trials: int
     n_trials_chunks: int
 
@@ -41,8 +39,15 @@ class LandscapeConfig:
             if key not in ['rotation', 'defocus', 'offset_x_in_angstroms', 'offset_y_in_angstroms']:
                 raise ValueError(f"Landscape variable {key} not recognized.")
 
+
 @dataclass
-class SlicedWassersteinConfig:
+class SlicedWassersteinCdfConfig:
+    n_projections: int
+    normalize_safely_epsilon: float = 1e-12
+
+
+@dataclass
+class SlicedWassersteinRandomPixelsConfig:
     n_projections: int
     n_pixels: int
     random_seed: int
@@ -62,14 +67,15 @@ class EmdConfig:
 
 @dataclass
 class ObjectiveConfig:
-    sliced_wasserstein: SlicedWassersteinConfig
+    sliced_wasserstein_cdf: SlicedWassersteinCdfConfig
+    sliced_wasserstein_random_pixels: SlicedWassersteinRandomPixelsConfig
     use_this_objective: str 
     emd: EmdConfig
 
     # post init to check objective type
     def __post_init__(self):
-        if self.use_this_objective not in ['sw', 'emd']:
-            raise ValueError("use_this_objective must be either 'sw' or 'emd'")
+        if self.use_this_objective not in ['sw_random_pixels', 'emd', 'sliced_wasserstein_cdf']:
+            raise ValueError("use_this_objective must be either 'sw_random_pixels' or 'emd' or 'sliced_wasserstein_cdf'.")
 
 
 @dataclass
@@ -162,19 +168,7 @@ def main(cfg: FullConfig):
 
     jnp.save(os.path.join(run_dir, "data/proj_obs_clean.npy"), proj_obs_clean)
     jnp.save(os.path.join(run_dir, "data/proj_obs_noisy.npy"), proj_obs_noisy)
-    
-    xm, ym = jnp.meshgrid(
-        jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
-        jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
-        indexing='ij',
-    )
-    grid = jnp.stack([xm, ym], axis=-1)
 
-
-    sliced_wasserstein = config.objective.sliced_wasserstein
-    print(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
-    n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
-    # key = jax.random.PRNGKey(idx)
     
 
     cv_dict = {
@@ -316,8 +310,11 @@ def main(cfg: FullConfig):
         jnp.save(os.path.join(run_dir, "data/emd_landscape.npy"), emd_landscape)
         landscape_for_plotting = emd_landscape
 
-    elif config.objective.use_this_objective =='sw':
-
+    elif config.objective.use_this_objective =='sw_random_pixels':
+        sliced_wasserstein = config.objective.sliced_wasserstein_random_pixels
+        print(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
+        n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
+        # key = jax.random.PRNGKey(idx)
 
         def sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta):
         
@@ -339,7 +336,12 @@ def main(cfg: FullConfig):
         def _sw_sorted_jax_differentiable(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, theta, key):
             return sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta)
     
-
+        xm, ym = jnp.meshgrid(
+            jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
+            jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
+            indexing='ij',
+        )
+        grid = jnp.stack([xm, ym], axis=-1)
 
         def eval_sw_single_theta(cv, other, theta, key):
             wxyz = pose.wxyz

@@ -1,13 +1,14 @@
 objective:
-  use_this_objective: sw
-  sliced_wasserstein:
+  use_this_objective: sw_random_pixels
+  sliced_wasserstein_random_pixels:
     n_projections: ???
     n_pixels: ???
     random_seed: 42
-    n_projections_chunk_size: ${objective.sliced_wasserstein.n_projections}  # set to n_projections for no chunking
-    # normalize_safely_epsilon: 1e-8
-    # - n_projections: 30
-    #   n_pixels: 30
+    n_projections_chunk_size: ${objective.sliced_wasserstein_random_pixels.n_projections}  # set to n_projections for no chunking
+
+  sliced_wasserstein_cdf:
+    n_projections: 100
+    normalize_safely_epsilon: 1e-8
   emd:
     crop_to_box_size: 64
     kwargs:
