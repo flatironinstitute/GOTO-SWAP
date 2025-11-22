@@ -45,7 +45,15 @@ by_projection:
   plotting:
     figure_size: [6,4]
     dpi: 300
-  n_projections_smaller_list_size: 10
+    marker: o
+    palette: Oranges_d
+    axvline: 
+      - label: compute_cost
+        value: 9712
+    axhline: 
+    - label: accuracy
+      value: 15.988581657409668
+  n_projections_smaller_list_size: 50
 
 by_trial:
   n_pixels_plot: 30

@@ -8,10 +8,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import logging
-from typing import Any, Union, Tuple
+from typing import Tuple, List, Optional
 import pandas as pd
 from tqdm import tqdm
-
+import seaborn as sns
 
 
 def compute_high_power_frac(arr, threshold):
@@ -42,10 +42,22 @@ class EMDLandscapeConfig:
     fname: str
     average_over_trial: bool
 
+
+@dataclass
+class AxVLine:
+    label: str
+    value: float
+
+
 @dataclass
 class PlottingConfig:
     figure_size: Tuple[float, float]
     dpi: int
+    marker: str
+    palette: str
+    axvline: Optional[List[AxVLine]] = None
+    axhline: Optional[List[AxVLine]] = None
+
 
 @dataclass
 class ByProjectionConfig:
@@ -53,6 +65,7 @@ class ByProjectionConfig:
     average_sw_landscape_over_trial: bool
     plotting: PlottingConfig
     n_projections_smaller_list_size: int
+
 
 @dataclass
 class FullConfig:
@@ -82,7 +95,7 @@ def plot_data(roughness_trends_fname, landscapes_and_images_fname, dose_to_n_tri
         plt.xscale('log')
         plt.title(f'Roughness trend for noise dose={noise_dose}')
         plt.xlabel('Time per SW evaluation (n_trials x n_projections x n_pixels, arbitrary units)')
-        plt.ylabel('Landscape roughness (high-freq power fraction)')
+        plt.ylabel('Roughness')
         plt.axhline(y=dose_to_roughness[int(noise_dose)], color='tab:blue', linestyle='--', alpha=0.5)
         plt.axvline(x=n_pixels_plot * n_projections * dose_to_n_trials[int(noise_dose)], color='tab:blue', linestyle='--', alpha=0.5)
         plt.legend()
@@ -128,6 +141,7 @@ def main(cfg: FullConfig):
     logger = logging.getLogger(__name__)
     config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
     logger.info(f"Config: {config}")
+    plt.style.use("seaborn-v0_8-poster")
     
     run_dir = HydraConfig.get().run.dir 
     logger.info(f"Run directory: {run_dir}")
@@ -171,113 +185,186 @@ def main(cfg: FullConfig):
             emd_landscape = emd_landscape.mean(axis=0)
         emd_landscape = zscore(emd_landscape)
 
-        for noise_dose, df_group in df.groupby('noise_dose'):
-            for n_pixels, df_subgroup in df_group.groupby('sw_n_pixels'):
-                logger.info(f'Accuracy metrics for noise_dose={noise_dose}, n_pixels={n_pixels}')
-                sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_subgroup.iterrows()]
-                
-
-                accuracies_all = []
-                roughness_all = []
-                avg_landacapes_all = []
-
-                for idx, sw_landscape in enumerate(sw_landscape_loaded):
-                    if config.by_projection.average_sw_landscape_over_trial:
-                        sw_landscape = sw_landscape.mean(axis=0)
-
-                    accuracy = []
-                    roughness = []
-                    n_projections_list = []
-
-
-                    n_projections = sw_landscape.shape[-1]
-                    # n_projections_smaller_list = range(1, n_projections)
-                    average_landacapes = []
-                    n_projections_smaller_list = jnp.exp(jnp.linspace(jnp.log(3), jnp.log(n_projections), num=config.by_projection.n_projections_smaller_list_size)).astype(int)
-                    for n_projections_smaller in tqdm(n_projections_smaller_list, desc="Downsampling projections", unit="n_projections"):
-                        idxs = np.floor(np.arange(n_projections_smaller) * (n_projections / n_projections_smaller)).astype(int)
-
-                        downsampled = sw_landscape[:, :, idxs]
-                        n_projections_list.append(len(idxs))
-
-                        avg_land = downsampled.mean(-1)
-                        accuracy.append(jnp.linalg.norm(emd_landscape - zscore(avg_land)))
-                        average_landacapes.append(avg_land)
-                        roughness.append(compute_high_power_frac(avg_land, config.roughness_threshold))
-
-                    avg_landacapes_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, average_landacapes))
-                    accuracies_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, accuracy))
-                    roughness_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, roughness))
-
-                # --------------------------------------------------
-                # 1) ACCURACY PLOT
-                # --------------------------------------------------
-                plt.figure(figsize=config.by_projection.plotting.figure_size)
-                for npix, nproj, acc in accuracies_all:
-                    plt.plot(nproj, acc, marker='o', label=f'n_pixels={npix}')
-
-                plt.title(f'Accuracy to EMD landscape (dose={noise_dose})')
-                plt.xlabel('n_projections')
-                plt.ylabel('L2 error to EMD landscape (z-scored)')
-                plt.legend()
-                plt.xscale('log')
-                fname_acc = os.path.join(run_dir, f"accuracy_dose{noise_dose}_npix{n_pixels}.png")
-                plt.savefig(fname_acc, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
-                plt.close()
-
-                # --------------------------------------------------
-                # 2) ROUGHNESS PLOT
-                # --------------------------------------------------
-                plt.figure(figsize=config.by_projection.plotting.figure_size)
-                for npix, nproj, rough in roughness_all:
-                    plt.plot(nproj, rough, marker='o', label=f'n_pixels={npix}')
-
-                plt.title(f'Roughness vs n_projections (dose={noise_dose})')
-                plt.xlabel('n_projections')
-                plt.ylabel('Roughness (fraction of high power)')
-                plt.legend()
-                plt.xscale('log')
-                fname_rough = os.path.join(run_dir, f"roughness_dose{noise_dose}_npix{n_pixels}.png")
-                plt.savefig(fname_rough, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
-                plt.close()
-
-                # --------------------------------------------------
-                # 2) joint plot SW vs EMD landscape
-                # --------------------------------------------------
-                import seaborn as sns
-                for npix, nproj, average_landacapes in avg_landacapes_all:
-                    logger.info(f'Joint plot SW vs EMD landscape (dose={noise_dose}, n_pixels={npix})')
-                    for n_projections_small, avg_land in zip(nproj, average_landacapes):
-                        sns.jointplot(x=avg_land.flatten(), y=emd_landscape.flatten(), kind='scatter', color='k')
-                        plt.suptitle(f'Joint plot SW vs EMD landscape (dose={noise_dose}, n_pixels={npix}, n_projections={n_projections_small})')
-                        fname_joint = os.path.join(run_dir, f"jointplot_dose{noise_dose}_npix{npix}_np{n_projections_small}.png")
-                        plt.savefig(fname_joint, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
-                        plt.close()
-        
-                # --------------------------------------------------
-                # 2) landscape plots
-                # --------------------------------------------------
-                for npix, nproj, average_landacapes in avg_landacapes_all:
-                    logger.info(f'Landscape plots (dose={noise_dose}, n_pixels={npix})')
-                    for n_projections_small, avg_land in zip(nproj, average_landacapes):
-                        plt.figure()
-                        plt.imshow(avg_land, 
-                                    extent=[df_subgroup.offset_x_in_angstroms_min.unique().item(), 
-                                            df_subgroup.offset_x_in_angstroms_max.unique().item(), 
-                                            df_subgroup.rotation_min_geodesic_angle_in_degrees.unique().item(), 
-                                            df_subgroup.rotation_max_geodesic_angle_in_degrees.unique().item()
-                                            ],
-                                    origin='lower',
-                                    aspect='auto',
-                                    cmap='jet')
-                        plt.colorbar()
-                        plt.title(f'Averaged landscape n_pixels={npix} | dose={noise_dose} | n_projections={n_projections_small}')
-                        plt.xlabel('Offset x (angstroms)')
-                        plt.ylabel('Rotation (geodesic distance in degrees)')
-                        fname_landscape = os.path.join(run_dir, f"landscape_dose{noise_dose}_npix{npix}_np{n_projections_small}.png")
-                        plt.savefig(fname_landscape, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
-                        plt.close()
+        def compute_accuacy_and_roughness_and_make_single_plots(df, outdir):
+            run_dir = outdir
+            df_list = []
+            for noise_dose, df_group in df.groupby('noise_dose'):
+                for n_pixels, df_subgroup in df_group.groupby('sw_n_pixels'):
+                    logger.info(f'Accuracy metrics for noise_dose={noise_dose}, n_pixels={n_pixels}')
+                    sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_subgroup.iterrows()]
                     
+
+                    accuracies_all = []
+                    roughness_all = []
+                    avg_landacapes_all = []
+
+                    for idx, sw_landscape in enumerate(sw_landscape_loaded):
+                        if config.by_projection.average_sw_landscape_over_trial:
+                            sw_landscape = sw_landscape.mean(axis=0)
+
+                        accuracy = []
+                        roughness = []
+                        n_projections_list = []
+
+
+                        n_projections = sw_landscape.shape[-1]
+                        # n_projections_smaller_list = range(1, n_projections)
+                        average_landacapes = []
+                        n_projections_smaller_list = jnp.exp(jnp.linspace(jnp.log(3), jnp.log(n_projections), num=config.by_projection.n_projections_smaller_list_size)).astype(int)
+                        for n_projections_smaller in tqdm(n_projections_smaller_list, desc="Downsampling projections", unit="n_projections"):
+                            idxs = np.floor(np.arange(n_projections_smaller) * (n_projections / n_projections_smaller)).astype(int)
+
+                            downsampled = sw_landscape[:, :, idxs]
+                            n_projections_list.append(len(idxs))
+
+                            avg_land = downsampled.mean(-1)
+                            accuracy.append(jnp.linalg.norm(emd_landscape - zscore(avg_land)))
+                            average_landacapes.append(avg_land)
+                            roughness.append(compute_high_power_frac(avg_land, config.roughness_threshold))
+
+                        avg_landacapes_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, average_landacapes))
+                        accuracies_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, accuracy))
+                        roughness_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, roughness))
+
+                    df_list.append(pd.DataFrame({
+                        "noise_dose": noise_dose,
+                        "n_pixels": n_pixels,
+                        "n_projections": n_projections_list,
+                        "average_landacapes": average_landacapes,
+                        "accuracy": accuracy,
+                        "roughness": roughness
+                    }))
+                    
+
+                    logger.info(f'roughness_all: {roughness_all}')
+                    logger.info(f'accuracies_all: {accuracies_all}')
+                    # --------------------------------------------------
+                    # 1) ACCURACY PLOT
+                    # --------------------------------------------------
+                    plt.figure(figsize=config.by_projection.plotting.figure_size)
+                    for npix, nproj, acc in accuracies_all:
+                        plt.plot(nproj, acc, marker='o', label=f'n_pixels={npix}')
+
+                    plt.title(f'Accuracy to EMD landscape (dose={noise_dose})')
+                    plt.xlabel('n_projections')
+                    plt.ylabel('L2 error to EMD landscape (z-scored)')
+                    plt.legend()
+                    plt.xscale('log')
+                    fname_acc = os.path.join(run_dir, f"accuracy_dose{noise_dose}_npix{n_pixels}.png")
+                    plt.savefig(fname_acc, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
+                    plt.close()
+
+                    # --------------------------------------------------
+                    # 2) ROUGHNESS PLOT
+                    # --------------------------------------------------
+                    plt.figure(figsize=config.by_projection.plotting.figure_size)
+                    for npix, nproj, rough in roughness_all:
+                        plt.plot(nproj, rough, marker='o', label=f'n_pixels={npix}')
+
+                    plt.title(f'Roughness vs n_projections (dose={noise_dose})')
+                    plt.xlabel('n_projections')
+                    plt.ylabel('Roughness')
+                    plt.legend()
+                    plt.xscale('log')
+                    fname_rough = os.path.join(run_dir, f"roughness_dose{noise_dose}_npix{n_pixels}.png")
+                    plt.savefig(fname_rough, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
+                    plt.close()
+
+                    # --------------------------------------------------
+                    # 2) joint plot SW vs EMD landscape
+                    # --------------------------------------------------
+                    import seaborn as sns
+                    for npix, nproj, average_landacapes in avg_landacapes_all:
+                        logger.info(f'Joint plot SW vs EMD landscape (dose={noise_dose}, n_pixels={npix})')
+                        for n_projections_small, avg_land in zip(nproj, average_landacapes):
+                            g = sns.jointplot(x=zscore(avg_land.flatten()), 
+                                              y=zscore(emd_landscape.flatten()), 
+                                              kind='scatter', 
+                                              color='k',
+                                              s=25,)
+                            g.set_axis_labels(r"$SW_2^2$ Landscape", r"$W_2^2$ Landscape values")
+                            # Set x & y ticks
+                            ticks = [-2, -1, 0, 1, 2]
+                            g.ax_joint.set_xticks(ticks)
+                            g.ax_joint.set_yticks(ticks)
+                            plt.suptitle(f'Joint plot SW vs EMD landscape (dose={noise_dose}, n_pixels={npix}, n_projections={n_projections_small})')
+                            fname_joint = os.path.join(run_dir, f"jointplot_dose{noise_dose}_npix{npix}_np{n_projections_small}.png")
+                            plt.savefig(fname_joint, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
+                            plt.close()
+            
+                    # --------------------------------------------------
+                    # 2) landscape plots
+                    # --------------------------------------------------
+                    for npix, nproj, average_landacapes in avg_landacapes_all:
+                        logger.info(f'Landscape plots (dose={noise_dose}, n_pixels={npix})')
+                        for n_projections_small, avg_land in zip(nproj, average_landacapes):
+                            plt.figure()
+                            avg_land = zscore(np.array(avg_land))
+                            plt.imshow(avg_land, 
+                                        extent=[df_subgroup.offset_x_in_angstroms_min.unique().item(), 
+                                                df_subgroup.offset_x_in_angstroms_max.unique().item(), 
+                                                df_subgroup.rotation_min_geodesic_angle_in_degrees.unique().item(), 
+                                                df_subgroup.rotation_max_geodesic_angle_in_degrees.unique().item()
+                                                ],
+                                        origin='lower',
+                                        aspect='auto',
+                                        cmap='jet')
+                            plt.colorbar()
+                            plt.title(f'Averaged landscape n_pixels={npix} | dose={noise_dose} | n_projections={n_projections_small}')
+                            plt.xlabel('Offset x (angstroms)')
+                            plt.ylabel('Rotation (geodesic distance in degrees)')
+                            fname_landscape = os.path.join(run_dir, f"landscape_dose{noise_dose}_npix{npix}_np{n_projections_small}.png")
+                            plt.savefig(fname_landscape, dpi=config.by_projection.plotting.dpi, bbox_inches='tight')
+                            plt.close()
+
+            df = pd.concat(df_list, ignore_index=True)
+            return df
+        single_plots_dir = os.path.join(run_dir, "single_plots")
+        os.makedirs(single_plots_dir, exist_ok=True)
+        df_roughness_accuracy = compute_accuacy_and_roughness_and_make_single_plots(df, single_plots_dir)
+
+        data_dir = os.path.join(run_dir, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        df_fname = os.path.join(data_dir, f'by_projection_analysis.csv')
+        df_roughness_accuracy['accuracy'] = df_roughness_accuracy['accuracy'].astype(float)
+        df_roughness_accuracy['roughness'] = df_roughness_accuracy['roughness'].astype(float)
+        df_roughness_accuracy['compute_cost'] = (df_roughness_accuracy['n_pixels'] * df_roughness_accuracy['n_projections']).astype(float)
+        df_roughness_accuracy.to_csv(df_fname, index=False)    
+
+        def plot_compute_accuracy_tradeoff(df, out_dir, dpi, marker, palette, axvline=None, axhline=None):
+            for x, y in [('compute_cost', 'roughness'), 
+                        ('compute_cost', 'accuracy'),
+                        ('n_projections', 'accuracy'),
+                        ('n_projections', 'roughness')
+                        ]:
+                print(f'Plotting {x} vs {y}')
+                sns.lineplot(
+                    data=df,
+                    x=x,
+                    y=y,
+                    hue='n_pixels',
+                    marker=marker,
+                    palette=palette
+                )
+                plt.xscale('log')
+                for axvline_dict in axvline:
+                    if axvline_dict['label'] == x:
+                        plt.axvline(x=axvline_dict['value'], color='gray', linestyle='--', alpha=0.5)
+                for axhline_dict in axhline:
+                    if axhline_dict['label'] == y:
+                        plt.axhline(y=axhline_dict['value'], color='gray', linestyle='--', alpha=0.5)
+                
+                plt.savefig(os.path.join(out_dir, f'by_projection_{x}_vs_{y}.png'), dpi=dpi, bbox_inches='tight')
+                plt.clf()
+        plot_compute_accuracy_tradeoff(df_roughness_accuracy, 
+                                       run_dir, 
+                                       config.by_projection.plotting.dpi,
+                                       config.by_projection.plotting.marker, 
+                                       config.by_projection.plotting.palette,
+                                       config.by_projection.plotting.axvline,
+                                       config.by_projection.plotting.axhline,
+                                       )
+
         return 
     elif config.mode == 'by_trial':
 
@@ -333,8 +420,6 @@ def main(cfg: FullConfig):
                 noisy_images=jnp.stack(noisy_image_list),
                 n_pixels_plot=config.n_pixels_plot,
                 )
-        
-
         plot_data(roughness_trends_fname, landscapes_and_images_fname, config.dose_to_n_trials, config.dose_to_roughness, run_dir, config.n_pixels_plot)
     else:
         raise ValueError(f"Invalid mode: {config.mode}")
