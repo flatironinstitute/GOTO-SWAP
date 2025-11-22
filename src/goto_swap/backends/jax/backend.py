@@ -97,7 +97,7 @@ class JAXBackend(BackendInterface):
 
         w_pos = wasserstein_over_strips(strips_x_pos, strips_x_true_pos).mean(axis=0)
         w_neg = wasserstein_over_strips(strips_x_neg, strips_x_true_neg).mean(axis=0)
-        w = (w_pos + w_neg)#.mean()
+        w = (w_pos + w_neg).mean()
 
         return w
     
