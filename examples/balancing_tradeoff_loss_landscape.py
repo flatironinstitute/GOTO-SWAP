@@ -44,11 +44,24 @@ class LandscapeConfig:
 class SlicedWassersteinCdfConfig:
     n_projections: int
     crop_to_box_size: int
-    normalize_safely_epsilon: float = 1e-8
+    method: str = 'cdf'
+    def __post_init__(self):
+        self.method = 'cdf'
+
+
+@dataclass
+class SlicedWassersteinICdfConfig:
+    n_projections: int
+    crop_to_box_size: int
+    n_interpolation_points: int
+    method: str = 'icdf'
+    def __post_init__(self):
+        self.method = 'icdf'
 
 
 @dataclass
 class SlicedWassersteinRandomPixelsConfig:
+    crop_to_box_size: int
     n_projections: int
     n_pixels: int
     random_seed: int
@@ -69,6 +82,7 @@ class EmdConfig:
 @dataclass
 class ObjectiveConfig:
     sliced_wasserstein_cdf: SlicedWassersteinCdfConfig
+    sliced_wasserstein_icdf: SlicedWassersteinICdfConfig
     sliced_wasserstein_random_pixels: SlicedWassersteinRandomPixelsConfig
     use_this_objective: str 
     emd: EmdConfig
@@ -312,9 +326,16 @@ def main(cfg: FullConfig):
         landscape_for_plotting = emd_landscape
 
 
-    elif config.objective.use_this_objective == 'sw_cdf':
-        sliced_wasserstein = config.objective.sliced_wasserstein_cdf
-        H = W = config.objective.emd.crop_to_box_size
+    elif config.objective.use_this_objective in ['sw_cdf', 'sw_icdf']:
+        if config.objective.use_this_objective == 'sw_cdf':
+            sliced_wasserstein = config.objective.sliced_wasserstein_cdf
+            wasserstein_distance_loss_images_kwargs = dict()
+
+        elif config.objective.use_this_objective == 'sw_icdf':
+            sliced_wasserstein = config.objective.sliced_wasserstein_icdf
+            wasserstein_distance_loss_images_kwargs = dict(n_interpolation_points=sliced_wasserstein.n_interpolation_points)
+
+        H = W = sliced_wasserstein.crop_to_box_size
         n_pix = proj_obs_noisy.shape[0]
         crop_start_idx, crop_end_idx = (n_pix - H)//2, (n_pix + H)//2
         img1 = proj_obs_noisy[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
@@ -361,7 +382,11 @@ def main(cfg: FullConfig):
                 proj_simulated = config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background
                 img2 = proj_simulated[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
                 assert img2.shape == (H, W)
-                sw_1d_cdf_values = jax_backend.wasserstein_distance_loss_images(img1.astype(jnp.float32).reshape(1, H, W), img2.astype(jnp.float32).reshape(1, H, W), num_rotations=sliced_wasserstein.n_projections)
+                sw_1d_cdf_values = jax_backend.wasserstein_distance_loss_images(img1.astype(jnp.float32).reshape(1, H, W), 
+                                                                                img2.astype(jnp.float32).reshape(1, H, W), 
+                                                                                num_rotations=sliced_wasserstein.n_projections,
+                                                                                method=sliced_wasserstein.method,
+                                                                                **wasserstein_distance_loss_images_kwargs)
                 sw_cdf_landscape = sw_cdf_landscape.at[:,i,j].set(sw_1d_cdf_values)  
         jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_cdf_landscape)
         landscape_for_plotting = jnp.sqrt(sw_cdf_landscape.mean(axis=(0, -1)))
@@ -370,6 +395,10 @@ def main(cfg: FullConfig):
         sliced_wasserstein = config.objective.sliced_wasserstein_random_pixels
         logger.info(f"Computing SW landscape for sw objective: {sliced_wasserstein}...")
         n_projections, n_pixels = sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels
+        H = W = sliced_wasserstein.crop_to_box_size
+        n_pix = proj_obs_noisy.shape[0]
+        crop_start_idx, crop_end_idx = (n_pix - H)//2, (n_pix + H)//2
+        img1 = proj_obs_noisy[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
 
         def sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta):
         
@@ -392,8 +421,8 @@ def main(cfg: FullConfig):
             return sw_sorted_jax_differentiable_theta_chunk(image_1, image_2, grid, n_pixels, normalize_safely_epsilon, key, theta)
     
         xm, ym = jnp.meshgrid(
-            jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
-            jnp.linspace(-n_pix // 2, n_pix // 2 - 1, n_pix),
+            jnp.linspace(-H // 2, H // 2 - 1, H),
+            jnp.linspace(-H // 2, H // 2 - 1, H),
             indexing='ij',
         )
         grid = jnp.stack([xm, ym], axis=-1)
@@ -432,9 +461,11 @@ def main(cfg: FullConfig):
                 offset_x_in_angstroms=offset_x,
                 offset_y_in_angstroms=offset_y,
             )
+            proj_simulated = config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background
+            img2 = proj_simulated[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
             return _sw_sorted_jax_differentiable(
-                config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background,
-                proj_obs_noisy,
+                img1,
+                img2,
                 grid,
                 n_pixels,
                 sliced_wasserstein.normalize_safely_epsilon,

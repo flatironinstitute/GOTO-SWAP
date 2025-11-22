@@ -1,6 +1,7 @@
 objective:
-  use_this_objective: sw_cdf
+  use_this_objective: sw_icdf
   sliced_wasserstein_random_pixels:
+    crop_to_box_size: 64
     n_projections: ???
     n_pixels: ???
     random_seed: 42
@@ -8,8 +9,12 @@ objective:
 
   sliced_wasserstein_cdf:
     n_projections: 100
-    normalize_safely_epsilon: 1e-8
-    crop_to_box_size: 128
+    crop_to_box_size: 64
+
+  sliced_wasserstein_icdf:
+    n_projections: 100
+    n_interpolation_points: 999
+    crop_to_box_size: 64
 
   emd:
     crop_to_box_size: 64

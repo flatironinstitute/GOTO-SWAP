@@ -164,6 +164,9 @@ def main(cfg: FullConfig):
             elif config.objective.use_this_objective == 'sw_cdf':
                 sw_n_pixels = 1
                 sw_n_projections = config.objective.sliced_wasserstein_cdf.n_projections
+            elif config.objective.use_this_objective == 'sw_icdf':
+                sw_n_pixels =  config.objective.sliced_wasserstein_icdf.n_interpolation_points
+                sw_n_projections = config.objective.sliced_wasserstein_icdf.n_projections
             else:
                 raise ValueError(f"Invalid objective: {config.objective.use_this_objective}")
             d_list.append({
@@ -228,7 +231,7 @@ def main(cfg: FullConfig):
                             n_projections_list.append(len(idxs))
 
                             avg_land = downsampled.mean(-1)
-                            if use_this_objective == 'sw_cdf':
+                            if use_this_objective in ['sw_cdf', 'sw_icdf']:
                                 avg_land = np.sqrt(avg_land)  # SW^2 CDF to SW^2
                             accuracy.append(jnp.linalg.norm(emd_landscape - zscore(avg_land)))
                             average_landacapes.append(avg_land)
