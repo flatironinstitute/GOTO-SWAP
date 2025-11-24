@@ -60,6 +60,14 @@ class SlicedWassersteinICdfConfig:
 
 
 @dataclass
+class SlicedWassersteinDifferentiableSortConfig:
+    n_projections: int
+    crop_to_box_size: int
+    method: str = 'dsort'
+    def __post_init__(self):
+        self.method = 'dsort'
+
+@dataclass
 class SlicedWassersteinRandomPixelsConfig:
     crop_to_box_size: int
     n_projections: int
@@ -84,12 +92,13 @@ class ObjectiveConfig:
     sliced_wasserstein_cdf: SlicedWassersteinCdfConfig
     sliced_wasserstein_icdf: SlicedWassersteinICdfConfig
     sliced_wasserstein_random_pixels: SlicedWassersteinRandomPixelsConfig
+    sliced_wasserstein_dsort: SlicedWassersteinDifferentiableSortConfig
     use_this_objective: str 
     emd: EmdConfig
 
     # post init to check objective type
     def __post_init__(self):
-        if self.use_this_objective not in ['sw_random_pixels', 'emd', 'sliced_wasserstein_cdf']:
+        if self.use_this_objective not in ['sw_random_pixels', 'emd', 'sw_cdf', 'sw_icdf', 'sw_dsort']:
             raise ValueError("use_this_objective must be either 'sw_random_pixels' or 'emd' or 'sliced_wasserstein_cdf'.")
 
 
@@ -326,7 +335,7 @@ def main(cfg: FullConfig):
         landscape_for_plotting = emd_landscape
 
 
-    elif config.objective.use_this_objective in ['sw_cdf', 'sw_icdf']:
+    elif config.objective.use_this_objective in ['sw_cdf', 'sw_icdf', 'sw_dsort']:
         if config.objective.use_this_objective == 'sw_cdf':
             sliced_wasserstein = config.objective.sliced_wasserstein_cdf
             wasserstein_distance_loss_images_kwargs = dict()
@@ -334,6 +343,10 @@ def main(cfg: FullConfig):
         elif config.objective.use_this_objective == 'sw_icdf':
             sliced_wasserstein = config.objective.sliced_wasserstein_icdf
             wasserstein_distance_loss_images_kwargs = dict(n_interpolation_points=sliced_wasserstein.n_interpolation_points)
+
+        elif config.objective.use_this_objective == 'sw_dsort':
+            sliced_wasserstein = config.objective.sliced_wasserstein_dsort
+            wasserstein_distance_loss_images_kwargs = dict()
 
         H = W = sliced_wasserstein.crop_to_box_size
         n_pix = proj_obs_noisy.shape[0]

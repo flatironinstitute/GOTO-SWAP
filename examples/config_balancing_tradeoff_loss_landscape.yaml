@@ -1,5 +1,5 @@
 objective:
-  use_this_objective: sw_icdf
+  use_this_objective: sw_dsort
   sliced_wasserstein_random_pixels:
     crop_to_box_size: 64
     n_projections: ???
@@ -15,6 +15,10 @@ objective:
     n_projections: 100
     n_interpolation_points: 999
     crop_to_box_size: 64
+
+  sliced_wasserstein_dsort:
+    n_projections: 2
+    crop_to_box_size: 32
 
   emd:
     crop_to_box_size: 64
@@ -52,7 +56,7 @@ setup:
       selection_string: "not element H"
       center: true
   noise:
-      dose: 100
+      dose: 300
       background: 0
   image:
       grid_size: 128
