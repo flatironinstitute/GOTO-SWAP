@@ -36,8 +36,8 @@ class JAXBackend(BackendInterface):
         jit_fn = jax.jit(backend.wasserstein_distance_loss_images, static_argnames=['num_rotations'])
         
         Args:
-            x: Predicted images (B, H, W) or (B, H, W, C)
-            x_true: True images (B, H, W) or (B, H, W, C)
+            x: Predicted images (B, H, W) 
+            x_true: True images (B, H, W) 
             num_rotations: Number of rotation angles to use
             
         Returns:
@@ -93,12 +93,30 @@ class JAXBackend(BackendInterface):
             # Wasserstein distance (based on code: https://github.com/flatironinstitute/Cryo-EM-Heterogeneity-Challenge-1/blob/sliced_w/src/cryo_challenge/map_to_map/sliced_wasserstein/pixel_strip.py#L49)
             wasserstein_over_strips = jax.vmap(self.cdf_over_one_strip, in_axes=(1, 1))  # (n_proj, B)
             axis=1
+
+        elif method == 'dsort':
+            space_1d_x = jnp.arange(x.shape[-1]).astype(x.dtype)
+            space_1d_x_true = jnp.arange(x_true.shape[-1]).astype(x_true.dtype)
+            def emd_1d_sorted_jax_differentiable_partial(u_weights, v_weights):
+                return partial(self.emd_1d_sorted_differentiable)(
+                    u=space_1d_x,
+                    v=space_1d_x_true,
+                    u_weights=u_weights, 
+                    v_weights=v_weights,
+                    metric='sqeuclidean', 
+                    tol=1e-12)
+            
+            wasserstein_over_strips_single_image_pair = jax.vmap(emd_1d_sorted_jax_differentiable_partial, in_axes=(0,0))
+            wasserstein_over_strips = jax.vmap(wasserstein_over_strips_single_image_pair, in_axes=(0, 0))
+            axis=0
     
         else:
-            raise ValueError(f"Unknown method '{method}'. Supported methods are 'cdf' and 'icdf'.")
+            raise ValueError(f"Unknown method '{method}'. Supported methods are 'cdf', 'icdf', 'dsort'.")
 
-        w_pos = wasserstein_over_strips(strips_x_pos, strips_x_true_pos)#.mean(axis=0)
-        w_neg = wasserstein_over_strips(strips_x_neg, strips_x_true_neg)#.mean(axis=0)
+        # print('shapes', space_1d.shape, strips_x_pos.shape, strips_x_true_pos.shape)
+        # print('dtypes', space_1d.dtype, strips_x_pos.dtype, strips_x_true_pos.dtype)
+        w_pos = wasserstein_over_strips(strips_x_pos, strips_x_true_pos)
+        w_neg = wasserstein_over_strips(strips_x_neg, strips_x_true_neg)
         w = (w_pos + w_neg).mean(axis)
 
         return w
