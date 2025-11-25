@@ -57,6 +57,7 @@ class PlottingConfig:
     palette: str
     axvline: Optional[List[AxVLine]] = None
     axhline: Optional[List[AxVLine]] = None
+    skip_single_plots: bool = True
 
 
 @dataclass
@@ -167,6 +168,9 @@ def main(cfg: FullConfig):
             elif config.objective.use_this_objective == 'sw_icdf':
                 sw_n_pixels =  config.objective.sliced_wasserstein_icdf.n_interpolation_points
                 sw_n_projections = config.objective.sliced_wasserstein_icdf.n_projections
+            elif config.objective.use_this_objective == 'sw_dsort':
+                sw_n_pixels = 1
+                sw_n_projections = config.objective.sliced_wasserstein_dsort.n_projections
             else:
                 raise ValueError(f"Invalid objective: {config.objective.use_this_objective}")
             d_list.append({
@@ -198,7 +202,7 @@ def main(cfg: FullConfig):
             emd_landscape = emd_landscape.mean(axis=0)
         emd_landscape = zscore(emd_landscape)
 
-        def compute_accuacy_and_roughness_and_make_single_plots(df, outdir):
+        def compute_accuacy_and_roughness_and_make_single_plots(df, outdir, skip_single_plots):
             run_dir = outdir
             df_list = []
             for (use_this_objective, noise_dose), df_group in df.groupby(['use_this_objective', 'noise_dose']):
@@ -231,8 +235,8 @@ def main(cfg: FullConfig):
                             n_projections_list.append(len(idxs))
 
                             avg_land = downsampled.mean(-1)
-                            if use_this_objective in ['sw_cdf', 'sw_icdf']:
-                                avg_land = np.sqrt(avg_land)  # SW^2 CDF to SW^2
+                            # if use_this_objective in ['sw_cdf', 'sw_icdf']:
+                            #     avg_land = np.sqrt(avg_land)  # SW^2 CDF to SW^2
                             accuracy.append(jnp.linalg.norm(emd_landscape - zscore(avg_land)))
                             average_landacapes.append(avg_land)
                             roughness.append(compute_high_power_frac(avg_land, config.roughness_threshold))
@@ -251,7 +255,8 @@ def main(cfg: FullConfig):
                         "use_this_objective": use_this_objective,
                     }))
                     
-
+                    if skip_single_plots:
+                        continue
                     logger.info(f'roughness_all: {roughness_all}')
                     logger.info(f'accuracies_all: {accuracies_all}')
                     # --------------------------------------------------
@@ -337,7 +342,7 @@ def main(cfg: FullConfig):
             return df
         single_plots_dir = os.path.join(run_dir, "single_plots")
         os.makedirs(single_plots_dir, exist_ok=True)
-        df_roughness_accuracy = compute_accuacy_and_roughness_and_make_single_plots(df, single_plots_dir)
+        df_roughness_accuracy = compute_accuacy_and_roughness_and_make_single_plots(df, single_plots_dir, skip_single_plots=config.by_projection.plotting.skip_single_plots)
 
         data_dir = os.path.join(run_dir, "data")
         os.makedirs(data_dir, exist_ok=True)
@@ -345,6 +350,7 @@ def main(cfg: FullConfig):
         df_roughness_accuracy['accuracy'] = df_roughness_accuracy['accuracy'].astype(float)
         df_roughness_accuracy['roughness'] = df_roughness_accuracy['roughness'].astype(float)
         df_roughness_accuracy['compute_cost'] = (df_roughness_accuracy['n_pixels'] * df_roughness_accuracy['n_projections']).astype(float)
+        df_roughness_accuracy['plot_label'] = df_roughness_accuracy['use_this_objective'].astype(str).map({'sw_cdf': 'SW CDF', 'sw_icdf': 'SW iCDF', 'sw_dsort': 'SW Greedy Matching'})
         df_roughness_accuracy.to_csv(df_fname, index=False)    
 
         def plot_compute_accuracy_tradeoff(df, out_dir, dpi, marker, palette, axvline=None, axhline=None):
@@ -358,7 +364,7 @@ def main(cfg: FullConfig):
                     data=df,
                     x=x,
                     y=y,
-                    hue='n_pixels',
+                    hue='plot_label',
                     marker=marker,
                     palette=palette
                 )

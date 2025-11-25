@@ -274,8 +274,9 @@ def main(cfg: FullConfig):
             coords = jnp.stack([X.ravel(), Y.ravel()], axis=1)    # (n_pixels, 2)
             diff = coords[:, None, :] - coords[None, :, :]        # (n, n, 2)
             C = jnp.sum(diff**2, axis=-1)                         # (n, n) squared Euclidean distances
-            return C
-        C = setup_cost_matrix(H, W)
+            return coords, C
+        coords, C = setup_cost_matrix(H, W)
+        assert np.allclose(ot.dist(coords, coords, 'sqeuclidean'), C)
 
         def full_wasserstein_distance(img1, img2, C, **kwargs):
             """Compute the full Wasserstein distance between two histograms a and b with cost matrix C."""
@@ -402,7 +403,7 @@ def main(cfg: FullConfig):
                                                                                 **wasserstein_distance_loss_images_kwargs)
                 sw_cdf_landscape = sw_cdf_landscape.at[:,i,j].set(sw_1d_cdf_values)  
         jnp.save(os.path.join(run_dir, "data/sw_landscape.npy"), sw_cdf_landscape)
-        landscape_for_plotting = jnp.sqrt(sw_cdf_landscape.mean(axis=(0, -1)))
+        landscape_for_plotting = sw_cdf_landscape.mean(axis=(0, -1))
 
     elif config.objective.use_this_objective =='sw_random_pixels':
         sliced_wasserstein = config.objective.sliced_wasserstein_random_pixels

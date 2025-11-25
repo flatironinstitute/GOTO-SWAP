@@ -17,8 +17,8 @@ objective:
     crop_to_box_size: 64
 
   sliced_wasserstein_dsort:
-    n_projections: 2
-    crop_to_box_size: 32
+    n_projections: 100
+    crop_to_box_size: 64
 
   emd:
     crop_to_box_size: 64

@@ -98,6 +98,9 @@ class JAXBackend(BackendInterface):
             space_1d_x = jnp.arange(x.shape[-1]).astype(x.dtype)
             space_1d_x_true = jnp.arange(x_true.shape[-1]).astype(x_true.dtype)
             def emd_1d_sorted_jax_differentiable_partial(u_weights, v_weights):
+                eps = jnp.finfo(u_weights.dtype).eps
+                u_weights = u_weights / (jnp.sum(u_weights) + eps)
+                v_weights = v_weights / (jnp.sum(v_weights) + eps)
                 return partial(self.emd_1d_sorted_differentiable)(
                     u=space_1d_x,
                     v=space_1d_x_true,
