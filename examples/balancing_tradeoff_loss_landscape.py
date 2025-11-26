@@ -178,7 +178,7 @@ def main(cfg: FullConfig):
     )
 
     proj_obs_clean = image_model_obs.simulate()
-    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(0),  config.setup.noise.dose*(proj_obs_clean + config.setup.noise.background))
+    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(config.setup.noise.random_seed),  config.setup.noise.dose*(proj_obs_clean + config.setup.noise.background))
 
     plt.imshow(proj_obs_clean, cmap='gray')
     plt.colorbar()
@@ -569,10 +569,10 @@ def main(cfg: FullConfig):
     plt.imshow(landscape_for_plotting, cmap='jet',
                extent=(other_grid_min, other_grid_max, cv_grid_min, cv_grid_max),
                origin='lower', aspect='auto')
-    plt.colorbar(label=f"{config.objective.use_this_objective.capitalize()}")
+    plt.colorbar(label=f"{config.objective.use_this_objective}")
     plt.xlabel(f"{key2} ")
     plt.ylabel(f"{key1} ")
-    plt.title(f"{config.objective.use_this_objective.capitalize()} Loss Landscape")
+    plt.title(f"{config.objective.use_this_objective} Loss Landscape")
     plt.savefig(os.path.join(run_dir, f"plots/{config.objective.use_this_objective}_landscape.png"))
     plt.clf()
 

@@ -221,25 +221,38 @@ def main(cfg: FullConfig):
                         
 
                         accuracy = []
+                        accuracy_std = []
+                        roughness_std = []
                         roughness = []
                         n_projections_list = []
 
 
                         n_projections = sw_landscape.shape[-1]
                         average_landacapes = []
+                        K = 1  # number of cyclic shifts
+                        rolls = jnp.linspace(0, n_projections, K, endpoint=False).astype(int)
+
                         n_projections_smaller_list = jnp.exp(jnp.linspace(jnp.log(3), jnp.log(n_projections), num=config.by_projection.n_projections_smaller_list_size)).astype(int)
                         for n_projections_smaller in tqdm(n_projections_smaller_list, desc="Downsampling projections", unit="n_projections"):
                             idxs = np.floor(np.arange(n_projections_smaller) * (n_projections / n_projections_smaller)).astype(int)
 
-                            downsampled = sw_landscape[:, :, idxs]
                             n_projections_list.append(len(idxs))
 
-                            avg_land = downsampled.mean(-1)
-                            # if use_this_objective in ['sw_cdf', 'sw_icdf']:
-                            #     avg_land = np.sqrt(avg_land)  # SW^2 CDF to SW^2
-                            accuracy.append(jnp.linalg.norm(emd_landscape - zscore(avg_land)))
-                            average_landacapes.append(avg_land)
-                            roughness.append(compute_high_power_frac(avg_land, config.roughness_threshold))
+                            roll_accuracy = []
+                            roll_roughness = []
+                            roll_avg_land = []
+                            for r in rolls:
+                                avg_land = jnp.roll(sw_landscape, shift=-r, axis=-1)[:, :, idxs].mean(-1) 
+                                roll_avg_land.append(avg_land)
+                                accuracy_val = jnp.linalg.norm(emd_landscape - zscore(avg_land))
+                                roll_accuracy.append(accuracy_val)
+                                roughness_val = compute_high_power_frac(zscore(avg_land), config.roughness_threshold)
+                                roll_roughness.append(roughness_val)
+                            average_landacapes.append(jnp.stack(roll_avg_land).mean(0))
+                            accuracy.append(jnp.stack(roll_accuracy).mean())
+                            accuracy_std.append(jnp.stack(roll_accuracy).std())
+                            roughness.append(jnp.stack(roll_roughness).mean())
+                            roughness_std.append(jnp.stack(roll_roughness).std())
 
                         avg_landacapes_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, average_landacapes))
                         accuracies_all.append((df_subgroup.iloc[idx]["sw_n_pixels"], n_projections_list, accuracy))
@@ -251,7 +264,9 @@ def main(cfg: FullConfig):
                         "n_projections": n_projections_list,
                         "average_landacapes": average_landacapes,
                         "accuracy": accuracy,
+                        "accuracy_std": accuracy_std,
                         "roughness": roughness,
+                        "roughness_std": roughness_std,
                         "use_this_objective": use_this_objective,
                     }))
                     
@@ -348,27 +363,65 @@ def main(cfg: FullConfig):
         os.makedirs(data_dir, exist_ok=True)
         df_fname = os.path.join(data_dir, f'by_projection_analysis.csv')
         df_roughness_accuracy['accuracy'] = df_roughness_accuracy['accuracy'].astype(float)
+        df_roughness_accuracy['accuracy_std'] = df_roughness_accuracy['accuracy_std'].astype(float)
         df_roughness_accuracy['roughness'] = df_roughness_accuracy['roughness'].astype(float)
         df_roughness_accuracy['compute_cost'] = (df_roughness_accuracy['n_pixels'] * df_roughness_accuracy['n_projections']).astype(float)
-        df_roughness_accuracy['plot_label'] = df_roughness_accuracy['use_this_objective'].astype(str).map({'sw_cdf': 'SW CDF', 'sw_icdf': 'SW iCDF', 'sw_dsort': 'SW Greedy Matching'})
+        df_roughness_accuracy['plot_label'] = df_roughness_accuracy['use_this_objective'].astype(str).map({'sw_cdf': 'CDF', 'sw_icdf': 'iCDF', 'sw_dsort': 'Greedy Matching'})
         df_roughness_accuracy.to_csv(df_fname, index=False)    
 
         def plot_compute_accuracy_tradeoff(df, out_dir, dpi, marker, palette, axvline=None, axhline=None):
-            for x, y in [('compute_cost', 'roughness'), 
-                        ('compute_cost', 'accuracy'),
-                        ('n_projections', 'accuracy'),
-                        ('n_projections', 'roughness')
-                        ]:
+            
+
+            for x, y in [
+                ('compute_cost', 'roughness'),
+                ('compute_cost', 'accuracy'),
+                ('n_projections', 'accuracy'),
+                ('n_projections', 'roughness')
+            ]:
                 print(f'Plotting {x} vs {y}')
+                fig, ax = plt.subplots(figsize=(6, 6))
+
+                # Draw main lines
                 sns.lineplot(
                     data=df,
                     x=x,
                     y=y,
                     hue='plot_label',
                     marker=marker,
-                    palette=palette
+                    palette=palette,
+                    ax=ax
                 )
+
+                # --- Extract actual colors seaborn assigned ---
+                handles, labels = ax.get_legend_handles_labels()
+                color_map = {label: h.get_color() for label, h in zip(labels, handles)}
+
+                # Add shading per group
+                for label, df_group in df.groupby('plot_label'):
+                    if y == 'accuracy':
+                        std_col = 'accuracy_std'
+                    else:
+                        continue
+                    # elif y == 'roughness':
+                    #     std_col = 'roughness_std'
+                    # else:
+                    #     raise ValueError(f'Invalid y: {y}')
+                    ax.fill_between(
+                            df_group[x],
+                            df_group[y] - df_group[std_col],
+                            df_group[y] + df_group[std_col],
+                            alpha=0.2,
+                            color=color_map[label]   # <-- Fixed
+                        )
+
                 plt.xscale('log')
+                plt.xlabel(x.replace('_', ' ').title())
+                plt.ylabel(y.replace('_', ' ').title())
+                fontsize = ax.xaxis.label.get_fontsize()
+
+                leg = ax.legend(title="SW Type", fontsize=fontsize)
+                leg.get_title().set_fontsize(fontsize)
+
                 if axvline is not None: 
                     for axvline_dict in axvline:
                         if axvline_dict['label'] == x:
@@ -379,7 +432,7 @@ def main(cfg: FullConfig):
                             plt.axhline(y=axhline_dict['value'], color='gray', linestyle='--', alpha=0.5)
                     
                 plt.savefig(os.path.join(out_dir, f'by_projection_{x}_vs_{y}.png'), dpi=dpi, bbox_inches='tight')
-                plt.clf()
+                plt.close(fig)
         plot_compute_accuracy_tradeoff(df_roughness_accuracy, 
                                        run_dir, 
                                        config.by_projection.plotting.dpi,

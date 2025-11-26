@@ -40,13 +40,13 @@ precomputed_landscape_paths:
   # - 2025-11-24/17-18-14 # sw_icdf dose 300
   # - 2025-11-24/17-17-32 # sw_dsort dose 300
 
-  # - 2025-11-24/17-33-00 # sw_dsort dose 30
-  # - 2025-11-24/17-32-02 # sw_icdf dose 30
-  # - 2025-11-24/17-31-17 # sw_cdf dose 30
+  - 2025-11-24/17-33-00 # sw_dsort dose 30
+  - 2025-11-24/17-32-02 # sw_icdf dose 30
+  - 2025-11-24/17-31-17 # sw_cdf dose 30
 
-  - 2025-11-24/17-36-03 # sw_dsort dose 30
-  - 2025-11-24/17-35-09 # sw_icdf dose 30
-  - 2025-11-24/17-34-01 # sw_cdf dose 30
+  # - 2025-11-24/17-36-03 # sw_dsort dose 10
+  # - 2025-11-24/17-35-09 # sw_icdf dose 10
+  # - 2025-11-24/17-34-01 # sw_cdf dose 10
 roughness_threshold: 0.25
 
 mode: by_projection
@@ -68,7 +68,7 @@ by_projection:
     # axhline: 
     # - label: accuracy
     #   value: 15.988581657409668
-  n_projections_smaller_list_size: 30
+  n_projections_smaller_list_size: 3
 
 by_trial:
   n_pixels_plot: 30

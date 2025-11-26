@@ -1,5 +1,5 @@
 objective:
-  use_this_objective: sw_dsort
+  use_this_objective: emd
   sliced_wasserstein_random_pixels:
     crop_to_box_size: 64
     n_projections: ???
@@ -8,16 +8,16 @@ objective:
     n_projections_chunk_size: ${objective.sliced_wasserstein_random_pixels.n_projections}  # set to n_projections for no chunking
 
   sliced_wasserstein_cdf:
-    n_projections: 100
+    n_projections: 1000
     crop_to_box_size: 64
 
   sliced_wasserstein_icdf:
-    n_projections: 100
+    n_projections: 1000
     n_interpolation_points: 999
     crop_to_box_size: 64
 
   sliced_wasserstein_dsort:
-    n_projections: 100
+    n_projections: 1000
     crop_to_box_size: 64
 
   emd:
@@ -37,8 +37,8 @@ landscape:
     rotation:
       axis: [1.0, 1, 1]
       min_geodesic_angle_in_degrees: 0.0
-      max_geodesic_angle_in_degrees: 10.0
-      n_points: 20
+      max_geodesic_angle_in_degrees: 180.0
+      n_points: 100
       # concentration: [1, 0, 0, 0.0]
       # n_batch: 100
     # defocus:
@@ -46,9 +46,9 @@ landscape:
     #   max_value_in_angstroms: 2000.0
     #   n_points: 4
     offset_x_in_angstroms:
-      min_value_in_angstroms: -2.0
-      max_value_in_angstroms: 2.0
-      n_points: 20
+      min_value_in_angstroms: -5.0
+      max_value_in_angstroms: 5.0
+      n_points: 100
     
 setup:
   specimen:
@@ -56,8 +56,9 @@ setup:
       selection_string: "not element H"
       center: true
   noise:
-      dose: 300
-      background: 0
+      dose: 100
+      background: 1
+      random_seed: 0
   image:
       grid_size: 128
       pixel_size: 0.5

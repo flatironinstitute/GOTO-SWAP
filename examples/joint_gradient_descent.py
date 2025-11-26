@@ -1,3 +1,4 @@
+import pandas as pd
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
@@ -31,6 +32,7 @@ class SpecimenConfig:
 class NoiseConfig:
     dose: float
     background: float
+    random_seed: int = 0
 
 
 @dataclass
@@ -282,6 +284,7 @@ def unnormalized_quaternion_to_geodesic(wxyz_raw):
 
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
+    plt.style.use("seaborn-v0_8-poster")
 
     # logger.info(OmegaConf.to_yaml(cfg))
     config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
@@ -348,7 +351,7 @@ def main(cfg: FullConfig):
     )
 
     proj_obs = image_model_obs.simulate()
-    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(0),  config.setup.noise.dose*(proj_obs + config.setup.noise.background))
+    proj_obs_noisy = jax.random.poisson(jax.random.PRNGKey(config.setup.noise.random_seed),  config.setup.noise.dose*(proj_obs + config.setup.noise.background))
 
     plt.imshow(proj_obs, cmap='gray')
     plt.colorbar()
@@ -511,38 +514,64 @@ def main(cfg: FullConfig):
              offset_xs=offset_xs,
              offset_ys=offset_ys,
     )
-
-    plt.plot(losses, label="Loss")
+    pd.DataFrame({
+        "losses": losses,
+        "cvs": cvs,
+        "defoci": defoci,
+        "wxyz_0": wxyzs[:,0],
+        "wxyz_1": wxyzs[:,1],
+        "wxyz_2": wxyzs[:,2],
+        "wxyz_3": wxyzs[:,3],
+        "geodesic_angles": geodesic_angles,
+        "offset_xs": offset_xs,
+        "offset_ys": offset_ys,
+    }).to_csv(os.path.join(run_dir, "data/joint_gradient_descent_traces.csv"), index=False)
+    label = config.optimization.use_this_objective
+    plt.plot(losses, label=label)
+    plt.xlabel("Gradient step")
+    plt.ylabel("Loss")
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/loss_curve.png"))
     plt.clf()
-    plt.plot(cvs, label="CV")
+    plt.plot(cvs, label=label)
     plt.axhline(y=config.setup.cv.value, color='gray', linestyle='--', label='Ground Truth')
+    plt.xlabel("Gradient step")
+    plt.ylabel("CV")
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/cv_curve.png"))
     plt.clf()
-    plt.plot(defoci, label="Defocus")
+    plt.plot(defoci, label=label)
+    plt.xlabel("Gradient step")
+    plt.ylabel("Defocus (Angstroms)")
     plt.axhline(y=config.setup.ctf.defocus_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/defocus_curve.png"))
     plt.clf()
-    plt.plot(wxyzs, label="WXYZ")
+    plt.plot(wxyzs, label=label)
+    plt.xlabel("Gradient step")
+    plt.ylabel("Rotation (quaternion components)")
     for quaternion_component in setup_pose_wxyz:
         plt.axhline(y=quaternion_component, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/wxyz_curve.png"))
     plt.clf()
-    plt.plot(geodesic_angles, label="Geodesic Angle (degrees)")
+    plt.plot(geodesic_angles, label=label)
+    plt.xlabel("Gradient step")
+    plt.ylabel("Geodesic Angle (degrees)")
     plt.axhline(y=0, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/geodesic_angle_curve.png"))
     plt.clf()
-    plt.plot(offset_xs, label="Offset X")
+    plt.plot(offset_xs, label=label)
+    plt.xlabel("Gradient step")
+    plt.ylabel("Offset X (Angstroms)")
     plt.axhline(y=config.setup.pose.translation.offset_x_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/offset_x_curve.png"))
     plt.clf()
-    plt.plot(offset_ys, label="Offset Y")
+    plt.plot(offset_ys, label=label)
+    plt.xlabel("Gradient step")
+    plt.ylabel("Offset Y (Angstroms)")
     plt.axhline(y=config.setup.pose.translation.offset_y_in_angstroms, color='gray', linestyle='--', label='Ground Truth')
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/offset_y_curve.png"))
