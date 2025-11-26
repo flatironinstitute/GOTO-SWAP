@@ -11,10 +11,14 @@ import os
 import logging
 
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
+from goto_swap import get_backend
+jax_backend = get_backend("jax")
+
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
 from cryojax.ndimage.operators import FourierGaussian
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SpecimenConfig:
@@ -129,13 +133,12 @@ class OptimizationConfig:
 
     # post init for use this objective sw or l2
     def __post_init__(self):
-        if self.use_this_objective not in ['sliced_wasserstein', 'l2']:
-            raise ValueError("use_this_objective must be either 'sliced_wasserstein' or 'l2'")
+        if self.use_this_objective not in ['sw_cdf', 'l2', 'sw', 'sw_dsort', 'sw_icdf']:
+            raise ValueError("use_this_objective must be either 'sw', 'sw_cdf', 'l2', 'sw_dsort' or 'sw_icdf'")
         if self.preconditioner:
             for key in self.preconditioner:
-                if key not in ['sliced_wasserstein', 'l2']:
-                    raise ValueError("preconditioner keys must be either 'sliced_wasserstein' or 'l2'")
-
+                if key not in ['sw_cdf', 'sw', 'l2', 'sw_dsort', 'sw_icdf']:
+                    raise ValueError("preconditioner keys must be either 'sw_cdf', 'sw', 'l2', 'sw_dsort' or 'sw_icdf'")
 @dataclass
 class InitialEstimates:
     cv: CVConfig
@@ -219,14 +222,57 @@ def sw_sorted_jax_differentiable(image_1, image_2, grid, n_projections, n_pixels
 
 def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, noise, key):
     image_1 = apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms).simulate()
+    n_pix = image_ref.shape[-1]
     
     def l2_loss(image_1, image_2):
+        # jax.debug.print("std: {s1}, {s2}", 
+        #                 s1=jnp.std(image_1), 
+        #                 s2=jnp.std(image_2))
+        # jax.debug.print("max: {m1}, {m2}", 
+        #                 m1=jnp.max(image_1), 
+        #                 m2=jnp.max(image_2))
+        # jax.debug.print("min: {m1}, {m2}", 
+        #                 m1=jnp.min(image_1), 
+        #                 m2=jnp.min(image_2))
+        # # mean
+        # jax.debug.print("mean: {m1}, {m2}", 
+        #                 m1=jnp.mean(image_1), 
+        #                 m2=jnp.mean(image_2))
         return jnp.linalg.norm(image_1 - image_2)
 
     if use_this_objective == 'sw':
         return sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key).mean()
     elif use_this_objective == 'l2':
+        # import numpy as np
+        # plt.imshow(np.array(image_1), cmap='gray')
+        # plt.colorbar()
+        # plt.savefig("debug_image_1.png")
+        # plt.clf()
+        # plt.imshow(np.array(image_ref), cmap='gray')
+        # plt.colorbar()
+        # plt.savefig("debug_image_ref.png")
+        # plt.clf()
         return l2_loss(noise.dose*(image_1 + noise.background)/noise.dose, image_ref/noise.dose) # normalize by dose to not affect learning rate
+    elif use_this_objective == 'sw_cdf':
+        return jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+                                                     image_ref.reshape(1, n_pix, n_pix),
+                                                     num_rotations=sliced_wasserstein.n_projections,
+                                                     method='cdf'
+                                                     ).mean()
+    elif use_this_objective == 'sw_dsort':
+        return jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+                                                     image_ref.reshape(1, n_pix, n_pix),
+                                                     num_rotations=sliced_wasserstein.n_projections,
+                                                     method='dsort'
+                                                     ).mean()
+    elif use_this_objective == 'sw_icdf':
+        return jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+                                                     image_ref.reshape(1, n_pix, n_pix),
+                                                     num_rotations=sliced_wasserstein.n_projections,
+                                                     method='icdf'
+                                                     ).mean()
+    else:
+        raise ValueError(f"use_this_objective not implemented for {use_this_objective}")
 
 
 def unnormalized_quaternion_to_geodesic(wxyz_raw):
@@ -237,7 +283,6 @@ def unnormalized_quaternion_to_geodesic(wxyz_raw):
 @hydra.main(version_base=None, config_path="./", config_name="config_joint_gradient_descent")
 def main(cfg: FullConfig):
 
-    logger = logging.getLogger(__name__)
     # logger.info(OmegaConf.to_yaml(cfg))
     config = OmegaConf.merge(OmegaConf.structured(FullConfig), cfg)
     
@@ -246,6 +291,7 @@ def main(cfg: FullConfig):
     os.makedirs(os.path.join(run_dir, "data"), exist_ok=True)
 
     logger.info(f"Saving traces to {run_dir}")
+    logger.info(OmegaConf.to_yaml(OmegaConf.to_container(config)))
 
     def setup_specimen(specimen: SpecimenConfig):
         atom_positions, _ = read_atoms_from_pdb(
