@@ -66,6 +66,7 @@ class ByProjectionConfig:
     average_sw_landscape_over_trial: bool
     plotting: PlottingConfig
     n_projections_smaller_list_size: int
+    n_cyclic_shifts: int
 
 
 @dataclass
@@ -209,6 +210,7 @@ def main(cfg: FullConfig):
                 for n_pixels, df_subgroup in df_group.groupby('sw_n_pixels'):
                     logger.info(f'Accuracy metrics for noise_dose={noise_dose}, n_pixels={n_pixels}')
                     sw_landscape_loaded = [jnp.load(d['landscape_path']) for _, d in df_subgroup.iterrows()]
+                    logger.info(f'Loaded {len(sw_landscape_loaded)} SW landscapes')
                     
 
                     accuracies_all = []
@@ -229,8 +231,8 @@ def main(cfg: FullConfig):
 
                         n_projections = sw_landscape.shape[-1]
                         average_landacapes = []
-                        K = 1  # number of cyclic shifts
-                        rolls = jnp.linspace(0, n_projections, K, endpoint=False).astype(int)
+                        # K = 3  # number of cyclic shifts
+                        rolls = jnp.linspace(0, n_projections, config.by_projection.n_cyclic_shifts, endpoint=False).astype(int)
 
                         n_projections_smaller_list = jnp.exp(jnp.linspace(jnp.log(3), jnp.log(n_projections), num=config.by_projection.n_projections_smaller_list_size)).astype(int)
                         for n_projections_smaller in tqdm(n_projections_smaller_list, desc="Downsampling projections", unit="n_projections"):
@@ -372,6 +374,7 @@ def main(cfg: FullConfig):
         def plot_compute_accuracy_tradeoff(df, out_dir, dpi, marker, palette, axvline=None, axhline=None):
             
 
+            rename = {'accuracy': 'error'}
             for x, y in [
                 ('compute_cost', 'roughness'),
                 ('compute_cost', 'accuracy'),
@@ -415,6 +418,7 @@ def main(cfg: FullConfig):
                         )
 
                 plt.xscale('log')
+                y = rename[y] if y in rename else y
                 plt.xlabel(x.replace('_', ' ').title())
                 plt.ylabel(y.replace('_', ' ').title())
                 fontsize = ax.xaxis.label.get_fontsize()

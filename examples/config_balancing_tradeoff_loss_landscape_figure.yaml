@@ -47,6 +47,11 @@ precomputed_landscape_paths:
   # - 2025-11-24/17-36-03 # sw_dsort dose 10
   # - 2025-11-24/17-35-09 # sw_icdf dose 10
   # - 2025-11-24/17-34-01 # sw_cdf dose 10
+
+  - 2025-11-26/12-48-07 # dsort, 180 deg
+  - 2025-11-26/12-47-10 # icdf, 180 deg
+  - 2025-11-26/12-46-16 # cdf, 180 deg
+
 roughness_threshold: 0.25
 
 mode: by_projection
@@ -68,7 +73,8 @@ by_projection:
     # axhline: 
     # - label: accuracy
     #   value: 15.988581657409668
-  n_projections_smaller_list_size: 3
+  n_projections_smaller_list_size: 50
+  n_cyclic_shifts: 1000
 
 by_trial:
   n_pixels_plot: 30
