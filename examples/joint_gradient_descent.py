@@ -20,6 +20,7 @@ import cryojax.simulator as cxs
 from cryojax.ndimage.operators import FourierGaussian
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 @dataclass
 class SpecimenConfig:
@@ -223,7 +224,12 @@ def sw_sorted_jax_differentiable(image_1, image_2, grid, n_projections, n_pixels
     
 
 def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, noise, key):
+    benchmark_time = False
+    if benchmark_time: s = time()
     image_1 = apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms).simulate()
+    if benchmark_time: 
+        simulate_time = time() - s
+        logger.debug(f"simulate_time: {simulate_time:.4f} seconds")
     n_pix = image_ref.shape[-1]
     
     def l2_loss(image_1, image_2):
@@ -243,7 +249,13 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         return jnp.linalg.norm(image_1 - image_2)
 
     if use_this_objective == 'sw':
-        return sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key).mean()
+        if benchmark_time: s = time()
+        result = sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key).mean()
+        if benchmark_time: 
+            sw_time = time() - s
+            logger.debug(f"sw_time: {sw_time:.4f} seconds")
+
+        return result
     elif use_this_objective == 'l2':
         # import numpy as np
         # plt.imshow(np.array(image_1), cmap='gray')
@@ -254,25 +266,45 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         # plt.colorbar()
         # plt.savefig("debug_image_ref.png")
         # plt.clf()
-        return l2_loss(noise.dose*(image_1 + noise.background)/noise.dose, image_ref/noise.dose) # normalize by dose to not affect learning rate
+        if benchmark_time: s = time()
+        result = l2_loss(noise.dose*(image_1 + noise.background)/noise.dose, image_ref/noise.dose) # normalize by dose to not affect learning rate
+        if benchmark_time: 
+            l2_time = time() - s
+            logger.debug(f"l2_time: {l2_time:.4f} seconds")
+        return result
     elif use_this_objective == 'sw_cdf':
-        return jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+        if benchmark_time: s = time()
+        result = jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='cdf'
                                                      ).mean()
+        if benchmark_time: 
+            cdf_time = time() - s
+            logger.debug(f"cdf_time: {cdf_time:.4f} seconds")
+        return result
     elif use_this_objective == 'sw_dsort':
-        return jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+        if benchmark_time: s = time()
+        result = jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='dsort'
                                                      ).mean()
+        if benchmark_time: 
+            dsort_time = time() - s
+            logger.debug(f"dsort_time: {dsort_time:.4f} seconds")
+        return result
     elif use_this_objective == 'sw_icdf':
-        return jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+        if benchmark_time: s = time()
+        result = jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='icdf'
                                                      ).mean()
+        if benchmark_time: 
+            icdf_time = time() - s
+            logger.debug(f"icdf_time: {icdf_time:.4f} seconds")
+        return result
     else:
         raise ValueError(f"use_this_objective not implemented for {use_this_objective}")
 
@@ -340,7 +372,7 @@ def main(cfg: FullConfig):
     )
     
     logger.info(f"image_model: {image_model}")
-    jnp.savez(os.path.join(run_dir, "data/initial_image_model.npz"), image_model=image_model, )
+    jnp.save(os.path.join(run_dir, "data/initial_image_model.npy"), image_model)
     image_model_obs = apply_all_cv(
         image_model=image_model,
         wxyz=pose.wxyz,
@@ -435,9 +467,15 @@ def main(cfg: FullConfig):
         params = initial_params
         preconditioner = optimization_cfg.preconditioner[optimization_cfg.use_this_objective]
 
+
+        total_time = 0
         for i in range(n_iters):
             key, subkey = jax.random.split(key)
+            s = time()
             loss_val, grads = value_and_grad_for_params_jit(params, subkey)
+            iter_time = time() - s
+            total_time += iter_time
+            logger.debug(f"value_and_grad_for_params_jit time: {iter_time:.4f} seconds")
 
             losses.append(float(loss_val))
             cvs.append(float(params.cv))
@@ -488,6 +526,7 @@ def main(cfg: FullConfig):
                     f"grad_offset_y={float(grads.offset_y_in_angstroms):.2e}, "
                     f"grad_wxyz=({float(grads.wxyz[0]):.2e}, {float(grads.wxyz[1]):.2e}, {float(grads.wxyz[2]):.2e}, {float(grads.wxyz[3]):.2e})"
                 )
+        logger.info(f"Average time per iteration for {optimization_cfg.use_this_objective}: {total_time / n_iters:.4f} seconds")
 
         return (
             jnp.array(losses),
@@ -504,6 +543,41 @@ def main(cfg: FullConfig):
     end = time()
     logger.info(f"Optimization took {end - start:.2f} seconds.")
     logger.info(f'Output in {run_dir}')
+
+    # images with initial and final parameters
+    for idx, label in zip([0, -1], ['initial', 'final']):
+        image_model_i = apply_all_cv(
+            image_model=image_model,
+            wxyz=wxyzs[idx],
+            offset_x_in_angstroms=offset_xs[idx],
+            offset_y_in_angstroms=offset_ys[idx],
+            cv_scalar=cvs[idx],
+            defocus_scalar=defoci[idx],
+        )
+        proj_i = image_model_i.simulate()
+        plt.imshow(proj_i, cmap='gray')
+        plt.colorbar()
+        plt.savefig(os.path.join(run_dir, f"plots/proj_{label}.png"))
+        plt.clf()
+        jnp.save(os.path.join(run_dir, f"data/proj_{label}.npy"), proj_i)
+    # benchmark forward model evalualtion
+    @eqx.filter_jit
+    def forward_model_trial():
+        return apply_all_cv(
+            image_model=image_model,
+            wxyz=wxyzs[-1],
+            offset_x_in_angstroms=offset_xs[-1],
+            offset_y_in_angstroms=offset_ys[-1],
+            cv_scalar=cvs[-1],
+            defocus_scalar=defoci[-1],
+        ).simulate()
+    n_trials_forward = 100
+    times = []
+    for _ in range(n_trials_forward + 1):
+        s = time()
+        _ = forward_model_trial()
+        times.append(time() - s)
+    logger.info(f"Forward model evaluation: Averaged over {n_trials_forward} trials. Average time: {sum(times[1:]) / n_trials_forward:.4f} seconds")
 
     jnp.savez(os.path.join(run_dir, "data/joint_gradient_descent_traces.npz"),
              losses=losses,

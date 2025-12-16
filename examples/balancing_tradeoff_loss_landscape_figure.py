@@ -231,7 +231,6 @@ def main(cfg: FullConfig):
 
                         n_projections = sw_landscape.shape[-1]
                         average_landacapes = []
-                        # K = 3  # number of cyclic shifts
                         rolls = jnp.linspace(0, n_projections, config.by_projection.n_cyclic_shifts, endpoint=False).astype(int)
 
                         n_projections_smaller_list = jnp.exp(jnp.linspace(jnp.log(3), jnp.log(n_projections), num=config.by_projection.n_projections_smaller_list_size)).astype(int)

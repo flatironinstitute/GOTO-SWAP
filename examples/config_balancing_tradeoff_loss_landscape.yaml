@@ -1,5 +1,5 @@
 objective:
-  use_this_objective: emd
+  use_this_objective: ???
   sliced_wasserstein_random_pixels:
     crop_to_box_size: 64
     n_projections: ???

@@ -66,7 +66,7 @@ by_projection:
     dpi: 300
     marker: o
     palette: Oranges_d
-    skip_single_plots: false
+    skip_single_plots: true
     # axvline: 
     #   - label: compute_cost
     #     value: 9712
