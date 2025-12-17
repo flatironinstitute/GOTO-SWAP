@@ -147,7 +147,8 @@ class PyTorchBackend(BackendInterface):
     
     def _wasserstein_over_strips(self, strips_x: torch.Tensor, strips_x_true: torch.Tensor) -> torch.Tensor:
         """Compute Wasserstein distance over strips."""
-        eps = 1e-8
+        # eps from floating point of strips_x
+        eps = torch.finfo(strips_x.dtype).eps
         strips_x = strips_x / (strips_x.sum(dim=-1, keepdim=True) + eps)  # (B, N, n)
         strips_x_true = strips_x_true / (strips_x_true.sum(dim=-1, keepdim=True) + eps)  # (B, N, n)
 
