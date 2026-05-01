@@ -18,6 +18,7 @@ jax_backend = get_backend("jax")
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
 from cryojax.ndimage import FourierGaussian
+from cryojax.rotations import convert_quaternion_to_euler_angles
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -164,36 +165,70 @@ class FullConfig:
     inference_model: InferenceModelConfig
 
 
-def tear_cv(positions: jnp.ndarray, normal: jnp.ndarray, offset: float, tear_amount: float):
-    """
-    Apply a 'tear' collective variable: separate the molecule into two halves
-    along a plane defined by (normal, offset).
+# def tear_cv(positions: jnp.ndarray, normal: jnp.ndarray, offset: float, tear_amount: float):
+#     """
+#     Apply a 'tear' collective variable: separate the molecule into two halves
+#     along a plane defined by (normal, offset).
 
+#     Args:
+#         positions: (N, 3) array of atom positions.
+#         normal: (3,) array, unit normal vector defining the splitting plane.
+#         offset: float, plane offset so that the plane is {x | n·x = offset}.
+#         tear_amount: float, distance to separate top and bottom halves along the normal.
+
+#     Returns:
+#         displaced_positions: (N, 3) array after applying the tear CV.
+#     """
+#     # Compute signed distance of each point from the plane
+#     signed_dist = jnp.dot(positions, normal) - offset
+
+#     # Continuous smooth mask: positive side → +1, negative side → -1
+#     # Use tanh for differentiability instead of hard sign
+#     smooth_sign = jnp.tanh(10.0 * signed_dist)
+
+#     # Displace along the normal vector
+#     displacement = (tear_amount / 2.0) * smooth_sign[:, None] * normal[None, :]
+
+#     displaced_positions = positions + displacement
+#     return displaced_positions
+
+
+def separate_cv(positions: jnp.ndarray, normal: jnp.ndarray, tear_amount: float):
+    """
+    Separate the molecule into two halves by displacing atoms with indices in idx 
+    by tear_amount along the axis specified by normal.
+    
     Args:
         positions: (N, 3) array of atom positions.
-        normal: (3,) array, unit normal vector defining the splitting plane.
-        offset: float, plane offset so that the plane is {x | n·x = offset}.
-        tear_amount: float, distance to separate top and bottom halves along the normal.
-
+        normal: (3,) unit vector defining the separation axis.
+        idx: (M,) array of atom indices to displace (the "half" to move).
+        tear_amount: float, distance to displace the selected atoms along normal.
+    
     Returns:
-        displaced_positions: (N, 3) array after applying the tear CV.
+        displaced_positions: (N, 3) array after displacing selected atoms.
     """
-    # Compute signed distance of each point from the plane
-    signed_dist = jnp.dot(positions, normal) - offset
-
-    # Continuous smooth mask: positive side → +1, negative side → -1
-    # Use tanh for differentiability instead of hard sign
-    smooth_sign = jnp.tanh(10.0 * signed_dist)
-
-    # Displace along the normal vector
-    displacement = (tear_amount / 2.0) * smooth_sign[:, None] * normal[None, :]
-
-    displaced_positions = positions + displacement
+    # Normalize the normal vector to unit length
+    normal = normal / jnp.linalg.norm(normal)
+    
+    # Create a displacement vector for the selected atoms
+    displacement = tear_amount * normal[None, :] / 2  # shape (1, 3)
+    
+    # Use at/set to displace only atoms at indices in idx
+    idx1 = jnp.arange(863)
+    idx2 = jnp.arange(863, 1558)
+    displaced_positions = positions.at[idx1].add(-displacement)
+    displaced_positions = displaced_positions.at[idx2].add(displacement)
+    
     return displaced_positions
 
 
 def apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms):
-    new_positions = tear_cv(image_model.volume.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
+    # new_positions = tear_cv(image_model.volume.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
+    # n_atoms = image_model.volume.positions.shape[0]
+    # bool_mask = jnp.arange(n_atoms) < 863
+    # integer_indices = jnp.where(bool_mask)[0]
+    new_positions = separate_cv(image_model.volume.positions, normal=jnp.array([18.338715,   -9.431992,  -10.780163]), 
+                                tear_amount=cv_scalar)
     image_model_updated = eqx.tree_at(lambda im: im.volume.positions, image_model, new_positions)
     image_model_updated = eqx.tree_at(lambda im: im.pose.offset_in_angstroms, image_model_updated, jnp.array([offset_x_in_angstroms, offset_y_in_angstroms]))
     image_model_updated = eqx.tree_at(lambda im: im.pose.wxyz, image_model_updated, wxyz)
@@ -337,6 +372,7 @@ def main(cfg: FullConfig):
         )
         return atom_positions
     atom_positions = setup_specimen(config.setup.specimen)
+    # print(f"Loaded {len(atom_positions)} atoms from {config.setup.specimen.pdb_file} with selection '{config.setup.specimen.selection_string}'")
 
     n_pix = config.setup.image.pad_size
     image_config = cxs.BasicImageConfig(
@@ -345,6 +381,7 @@ def main(cfg: FullConfig):
         voltage_in_kilovolts=config.setup.ctf.voltage, 
         pad_options=dict(shape=(n_pix, n_pix))
     )
+    
     volume = cxs.GaussianMixtureVolume(
                 atom_positions,
                 amplitudes=config.setup.integrator.atom_amplitude,
@@ -369,7 +406,7 @@ def main(cfg: FullConfig):
                                                    ),
         quantity_mode='intensity'
     )
-    print(image_model)
+    # print(image_model)
     
     logger.info(f"image_model: {image_model}")
     jnp.save(os.path.join(run_dir, "data/initial_image_model.npy"), image_model)
@@ -404,7 +441,7 @@ def main(cfg: FullConfig):
         indexing='ij',
     )
     grid = jnp.stack([xm, ym], axis=-1)
-
+    # assert False
 
     @dataclass
     class OptParams(eqx.Module):
@@ -515,16 +552,18 @@ def main(cfg: FullConfig):
             )
 
             if i % optimization_cfg.print_every == 0:
+                euler_angles_deg = convert_quaternion_to_euler_angles(params.wxyz)
                 logger.info(
                     f"Step {i:03d}: loss={loss_val:.6e}, cv={float(params.cv):.6f}, defocus={float(params.defocus):.6f}, "
                     f"offset_x={float(params.offset_x_in_angstroms):.6f}, offset_y={float(params.offset_y_in_angstroms):.6f}, "
                     f"wxyz=({float(params.wxyz[0]):.6f}, {float(params.wxyz[1]):.6f}, {float(params.wxyz[2]):.6f}, {float(params.wxyz[3]):.6f}), "
                     f"geodesic_angle={geodesic_angles[-1]:.3f} degrees, "
+                    f"euler_angles_deg=({euler_angles_deg[0]:.2f}, {euler_angles_deg[1]:.2f}, {euler_angles_deg[2]:.2f}), "
                     f"grad_cv={float(grads.cv):.2e}, "
                     f"grad_defocus={float(grads.defocus):.2e}, "
                     f"grad_offset_x={float(grads.offset_x_in_angstroms):.2e}, "
                     f"grad_offset_y={float(grads.offset_y_in_angstroms):.2e}, "
-                    f"grad_wxyz=({float(grads.wxyz[0]):.2e}, {float(grads.wxyz[1]):.2e}, {float(grads.wxyz[2]):.2e}, {float(grads.wxyz[3]):.2e})"
+                    f"grad_wxyz=({float(grads.wxyz[0]):.2e}, {float(grads.wxyz[1]):.2e}, {float(grads.wxyz[2]):.2e}, {float(grads.wxyz[3]):.2e})",
                 )
         logger.info(f"Average time per iteration for {optimization_cfg.use_this_objective}: {total_time / n_iters:.4f} seconds")
 

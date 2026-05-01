@@ -1,15 +1,15 @@
 setup:
     specimen:
-        pdb_file: "1uao_assembly.pdb"
-        selection_string: "not element H"
+        pdb_file: "/mnt/home/gwoollard/ceph/repos/GOTO-SWAP/examples/1BRS.pdb"
+        selection_string: '(not element H) and ((resi 1 to 863) or (resi 2913 to 3607))'
         center: true
     noise:
-        dose: 100
-        background: 1
+        dose: 3000
+        background: 1.0
         random_seed: 0
     image:
         grid_size: 128
-        pixel_size: 0.5
+        pixel_size: 1.0
         pad_size: 128 
     integrator:
         atom_width: 0.25
@@ -23,7 +23,7 @@ setup:
           offset_x_in_angstroms: 0.0
           offset_y_in_angstroms: 0.0
     ctf:
-        defocus_in_angstroms: 2000.0
+        defocus_in_angstroms: 5000.0
         voltage: 300.0
     envelope:
         amplitude: 1.0
@@ -34,8 +34,8 @@ setup:
 
 
 optimization:
-    learning_rate: 1
-    n_iterations: 3000
+    learning_rate: 0.0001
+    n_iterations: 5000
     print_every: 100
     use_this_objective: sw_cdf
     sliced_wasserstein:
@@ -44,30 +44,22 @@ optimization:
         normalize_safely_epsilon: 1e-8
     preconditioner: 
       l2: # lr 1
-        cv: 0.1
-        defocus: 1e4
-        quaternion: 0.0001
-        offset: 0.1
+        cv: 100
+        defocus: 1e5
+        quaternion: 0.01
+        offset: 10
       sw: # sw with lr 0.01 and n_iterations 100 np 30, np 300
         cv: 300.0
         defocus: 1000000.0 # maybe higher?
         quaternion: 0.1
         offset: 100.0
       sw_cdf: # lr: 1
-        cv: 5e5
-        defocus: 1e10
-        quaternion: 3e2
-        offset: 1e5
-      sw_icdf: # lr: 1
-        cv: 5e1
-        defocus: 1e6
-        quaternion: 0.5
-        offset: 1e2
-      sw_dsort: # lr: 1
-        cv: 1e2
-        defocus: 1e7
-        quaternion: 0.1
-        offset: 5e1
+        cv: 5e7
+        defocus: 1e11
+        quaternion: 1e4
+        offset: 1e6
+      sw_icdf: ${optimization.preconditioner.sw_cdf} # lr: 0.01
+      sw_dsort: ${optimization.preconditioner.sw_cdf} # lr:  0.0001
     optimize_these_variables:
       cv: true
       defocus: true
@@ -82,17 +74,17 @@ inference_model:
     initial_estimates:
         cv:
             type: ${setup.cv.type}
-            value: 5 #${setup.cv.value}
+            value: 30 #${setup.cv.value}
         pose:
             euler_angles_deg:
-              phi_angle: 4 #${setup.pose.euler_angles_deg.phi_angle}
-              theta_angle: 4 # ${setup.pose.euler_angles_deg.theta_angle}
-              psi_angle: 4 #${setup.pose.euler_angles_deg.psi_angle}
+              phi_angle: 20 #${setup.pose.euler_angles_deg.phi_angle}
+              theta_angle: 20 #${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: 20 #${setup.pose.euler_angles_deg.psi_angle}
             translation:
-              offset_x_in_angstroms: 5 #${setup.pose.translation.offset_x_in_angstroms}
-              offset_y_in_angstroms: 5 # ${setup.pose.translation.offset_y_in_angstroms}
+              offset_x_in_angstroms: -10 #${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: -10 #${setup.pose.translation.offset_y_in_angstroms}
         ctf:
-            defocus_in_angstroms: 3000 #${setup.ctf.defocus_in_angstroms}
+            defocus_in_angstroms: 7000 #${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}
     integrator:
         atom_width: ${setup.integrator.atom_width}
