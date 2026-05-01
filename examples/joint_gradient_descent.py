@@ -17,7 +17,7 @@ jax_backend = get_backend("jax")
 
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
-from cryojax.ndimage.operators import FourierGaussian
+from cryojax.ndimage import FourierGaussian
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -193,8 +193,8 @@ def tear_cv(positions: jnp.ndarray, normal: jnp.ndarray, offset: float, tear_amo
 
 
 def apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms):
-    new_positions = tear_cv(image_model.volume_parametrization.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
-    image_model_updated = eqx.tree_at(lambda im: im.volume_parametrization.positions, image_model, new_positions)
+    new_positions = tear_cv(image_model.volume.positions, normal=jnp.array([1., 1, 0.]), offset=0.0, tear_amount=cv_scalar)
+    image_model_updated = eqx.tree_at(lambda im: im.volume.positions, image_model, new_positions)
     image_model_updated = eqx.tree_at(lambda im: im.pose.offset_in_angstroms, image_model_updated, jnp.array([offset_x_in_angstroms, offset_y_in_angstroms]))
     image_model_updated = eqx.tree_at(lambda im: im.pose.wxyz, image_model_updated, wxyz)
     image_model_updated = eqx.tree_at(lambda im: im.scattering_theory.transfer_theory.ctf.defocus_in_angstroms, image_model_updated, defocus_scalar)
@@ -367,9 +367,9 @@ def main(cfg: FullConfig):
         transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
                                                    envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, b_factor=config.setup.envelope.b_factor),
                                                    ),
-        simulates_quantity=True,
         quantity_mode='intensity'
     )
+    print(image_model)
     
     logger.info(f"image_model: {image_model}")
     jnp.save(os.path.join(run_dir, "data/initial_image_model.npy"), image_model)
