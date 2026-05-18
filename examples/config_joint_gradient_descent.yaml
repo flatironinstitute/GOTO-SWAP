@@ -34,7 +34,7 @@ setup:
 
 
 optimization:
-    learning_rate: 0.0001
+    learning_rate: 1
     n_iterations: 5000
     print_every: 100
     use_this_objective: sw_cdf
@@ -44,10 +44,10 @@ optimization:
         normalize_safely_epsilon: 1e-8
     preconditioner: 
       l2: # lr 1
-        cv: 100
-        defocus: 1e5
+        cv: 10
+        defocus: 1e4
         quaternion: 0.01
-        offset: 10
+        offset: 1
       sw: # sw with lr 0.01 and n_iterations 100 np 30, np 300
         cv: 300.0
         defocus: 1000000.0 # maybe higher?
@@ -78,11 +78,11 @@ inference_model:
         pose:
             euler_angles_deg:
               phi_angle: 20 #${setup.pose.euler_angles_deg.phi_angle}
-              theta_angle: 20 #${setup.pose.euler_angles_deg.theta_angle}
-              psi_angle: 20 #${setup.pose.euler_angles_deg.psi_angle}
+              theta_angle: 20 # ${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: 20 # ${setup.pose.euler_angles_deg.psi_angle}
             translation:
-              offset_x_in_angstroms: -10 #${setup.pose.translation.offset_x_in_angstroms}
-              offset_y_in_angstroms: -10 #${setup.pose.translation.offset_y_in_angstroms}
+              offset_x_in_angstroms: -10 # ${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: -10 # ${setup.pose.translation.offset_y_in_angstroms}
         ctf:
             defocus_in_angstroms: 7000 #${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}

@@ -15,7 +15,7 @@ from typing import Any, Union, Tuple
 from goto_swap.backends.jax.emd import emd_1d_sorted_jax_differentiable
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
-from cryojax.ndimage.operators import FourierGaussian
+from cryojax.ndimage import FourierGaussian
 
 from joint_gradient_descent import sw_sorted_jax_differentiable
 from joint_gradient_descent import (
@@ -39,6 +39,13 @@ class LandscapeConfig:
             if key not in ['rotation', 'defocus', 'offset_x_in_angstroms', 'offset_y_in_angstroms']:
                 raise ValueError(f"Landscape variable {key} not recognized.")
 
+
+@dataclass
+class L2Config:
+    crop_to_box_size: int
+    method: str = 'l2'
+    def __post_init__(self):
+        self.method = 'l2'
 
 @dataclass
 class SlicedWassersteinCdfConfig:
@@ -89,6 +96,7 @@ class EmdConfig:
 
 @dataclass
 class ObjectiveConfig:
+    l2: L2Config
     sliced_wasserstein_cdf: SlicedWassersteinCdfConfig
     sliced_wasserstein_icdf: SlicedWassersteinICdfConfig
     sliced_wasserstein_random_pixels: SlicedWassersteinRandomPixelsConfig
@@ -98,8 +106,9 @@ class ObjectiveConfig:
 
     # post init to check objective type
     def __post_init__(self):
-        if self.use_this_objective not in ['sw_random_pixels', 'emd', 'sw_cdf', 'sw_icdf', 'sw_dsort']:
-            raise ValueError("use_this_objective must be either 'sw_random_pixels' or 'emd' or 'sliced_wasserstein_cdf'.")
+        methods = ['l2', 'sw_cdf', 'sw_icdf', 'sw_random_pixels', 'sw_dsort', 'emd']
+        if self.use_this_objective not in methods:
+            raise ValueError("use_this_objective must be in " + ", ".join(methods))
 
 
 @dataclass
@@ -161,7 +170,6 @@ def main(cfg: FullConfig):
         transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
                                                    envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, b_factor=config.setup.envelope.b_factor),
                                                    ),
-        simulates_quantity=True,
         quantity_mode='intensity'
     )
     
@@ -336,6 +344,53 @@ def main(cfg: FullConfig):
         landscape_for_plotting = emd_landscape
 
 
+    elif config.objective.use_this_objective == 'l2':
+        H = W = config.objective.l2.crop_to_box_size
+        crop_start_idx, crop_end_idx = (n_pix - H)//2, (n_pix + H)//2
+        img1 = proj_obs_noisy[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
+        l2_landscape = jnp.zeros((len(cv_grid), len(other_grid)))
+        for i, cv in enumerate(tqdm(cv_grid, desc="Computing L2 landscape")):
+            for j, other in enumerate(other_grid):
+
+                wxyz = pose.wxyz
+                defocus = config.setup.ctf.defocus_in_angstroms
+                offset_x = config.setup.pose.translation.offset_x_in_angstroms
+                offset_y = config.setup.pose.translation.offset_y_in_angstroms
+                cv_scalar = config.setup.cv.value
+                if 'rotation' == key1:
+                    wxyz = cv
+                elif 'defocus' == key1:
+                    defocus = cv
+                elif 'offset_x_in_angstroms' == key1:
+                    offset_x = cv
+                elif 'offset_y_in_angstroms' == key1:
+                    offset_y = cv
+                elif 'cv' == key1:
+                    cv = cv
+                if 'rotation' == key2:
+                    wxyz = other
+                elif 'defocus' == key2:
+                    defocus = other
+                elif 'offset_x_in_angstroms' == key2:
+                    offset_x = other
+                elif 'offset_y_in_angstroms' == key2:
+                    offset_y = other
+                elif 'cv' == key2:
+                    cv = other
+                new_image_model = apply_all_cv(
+                    image_model,
+                    wxyz=wxyz,
+                    cv_scalar=cv_scalar,
+                    defocus_scalar=defocus,
+                    offset_x_in_angstroms=offset_x,
+                    offset_y_in_angstroms=offset_y,
+                )
+                proj_simulated = config.setup.noise.dose * new_image_model.simulate() + config.setup.noise.background
+                img2 = proj_simulated[crop_start_idx:crop_end_idx, crop_start_idx:crop_end_idx]
+                assert img2.shape == (H, W)
+                l2_landscape = l2_landscape.at[i,j].set(jnp.linalg.norm(img1.astype(jnp.float32) - img2.astype(jnp.float32)))
+        jnp.save(os.path.join(run_dir, "data/l2_landscape.npy"), l2_landscape)
+        landscape_for_plotting = l2_landscape
     elif config.objective.use_this_objective in ['sw_cdf', 'sw_icdf', 'sw_dsort']:
         if config.objective.use_this_objective == 'sw_cdf':
             sliced_wasserstein = config.objective.sliced_wasserstein_cdf
@@ -357,7 +412,7 @@ def main(cfg: FullConfig):
         from goto_swap import get_backend
         jax_backend = get_backend("jax")
         sw_cdf_landscape = jnp.zeros((1, len(cv_grid), len(other_grid), sliced_wasserstein.n_projections))
-        for i, cv in enumerate(tqdm(cv_grid, desc="Computing SW CDF landscape")):
+        for i, cv in enumerate(tqdm(cv_grid, desc="Computing SW landscape")):
             for j, other in enumerate(other_grid):
 
                 wxyz = pose.wxyz

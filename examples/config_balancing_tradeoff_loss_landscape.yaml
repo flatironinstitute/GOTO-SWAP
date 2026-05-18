@@ -24,6 +24,8 @@ objective:
     crop_to_box_size: 64
     kwargs:
       numItermax: 1000000
+  l2:
+    crop_to_box_size: 64
 landscape:
   # n_trials_per_point: 3
   # n_landscape_values: 4
@@ -46,22 +48,22 @@ landscape:
     #   max_value_in_angstroms: 2000.0
     #   n_points: 4
     offset_x_in_angstroms:
-      min_value_in_angstroms: -5.0
-      max_value_in_angstroms: 5.0
+      min_value_in_angstroms: -10.0
+      max_value_in_angstroms: 10.0
       n_points: 100
     
 setup:
   specimen:
-      pdb_file: "1uao_assembly.pdb"
-      selection_string: "not element H"
+      pdb_file: "/mnt/home/gwoollard/ceph/repos/GOTO-SWAP/examples/1BRS.pdb"
+      selection_string: '(not element H) and ((resi 1 to 863) or (resi 2913 to 3607))'
       center: true
   noise:
-      dose: 100
+      dose: 3000
       background: 1
       random_seed: 0
   image:
       grid_size: 128
-      pixel_size: 0.5
+      pixel_size: 1.0
       pad_size: 128 
   integrator:
       atom_width: 0.25
@@ -75,7 +77,7 @@ setup:
         offset_x_in_angstroms: 0.0
         offset_y_in_angstroms: 0.0
   ctf:
-      defocus_in_angstroms: 2000.0
+      defocus_in_angstroms: 5000.0
       voltage: 300.0
   envelope:
       amplitude: 1.0
