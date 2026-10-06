@@ -40,17 +40,22 @@ precomputed_landscape_paths:
   # - 2025-11-24/17-18-14 # sw_icdf dose 300
   # - 2025-11-24/17-17-32 # sw_dsort dose 300
 
-  - 2025-11-24/17-33-00 # sw_dsort dose 30
-  - 2025-11-24/17-32-02 # sw_icdf dose 30
-  - 2025-11-24/17-31-17 # sw_cdf dose 30
+  # - 2025-11-24/17-33-00 # sw_dsort dose 30
+  # - 2025-11-24/17-32-02 # sw_icdf dose 30
+  # - 2025-11-24/17-31-17 # sw_cdf dose 30
 
   # - 2025-11-24/17-36-03 # sw_dsort dose 10
   # - 2025-11-24/17-35-09 # sw_icdf dose 10
   # - 2025-11-24/17-34-01 # sw_cdf dose 10
 
-  - 2025-11-26/12-48-07 # dsort, 180 deg
-  - 2025-11-26/12-47-10 # icdf, 180 deg
-  - 2025-11-26/12-46-16 # cdf, 180 deg
+  # /mnt/home/gwoollard/ceph/repos/GOTO-SWAP/examples/outputs/2025-11-26/12-49-09/data/emd_landscape.npy
+  # - 2025-11-26/12-48-07 # dsort, 180 deg 
+  # - 2025-11-26/12-47-10 # icdf, 180 deg
+  # - 2025-11-26/12-46-16 # cdf, 180 deg
+
+  - 2026-05-18/16-09-05 # dsort, 180 deg
+  - 2026-05-18/16-08-06 # icdf, 180 deg
+  - 2026-05-18/16-07-07 # cdf, 180 deg
 
 roughness_threshold: 0.25
 
@@ -58,7 +63,7 @@ mode: by_projection
 
 by_projection:
   emd_landscape: 
-    fname: /mnt/home/gwoollard/ceph/repos/GOTO-SWAP/examples/outputs/2025-11-18/14-04-08/data/emd_landscape.npy
+    fname: /mnt/home/gwoollard/ceph/repos/GOTO-SWAP/examples/outputs/2026-05-18/16-10-06/data/emd_landscape.npy
     average_over_trial: false
   average_sw_landscape_over_trial: true
   plotting:

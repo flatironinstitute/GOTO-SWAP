@@ -256,9 +256,23 @@ def sw_sorted_jax_differentiable(image_1, image_2, grid, n_projections, n_pixels
 
     losses = jax.vmap(loss_per_theta)(thetas, keys)
     return losses
+
+def apply_background_and_dose(image, dose, background):
+    """
+    Apply background and dose to the image.
+
+    Args:
+        image: (H, W) array representing the image.
+        dose: float, the dose factor to scale the image.
+        background: float, the background level to add to the image.
+
+    Returns:
+        processed_image: (H, W) array after applying background and dose.
+    """
+    return dose * (image + background)
     
 
-def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, noise, key):
+def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms, use_this_objective, grid, sliced_wasserstein, noise_dose, noise_background, key):
     benchmark_time = False
     if benchmark_time: s = time()
     image_1 = apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms).simulate()
@@ -285,8 +299,9 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
 
     if use_this_objective == 'sw':
         if benchmark_time: s = time()
-        result = sw_sorted_jax_differentiable(noise.dose*(image_1 + noise.background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key).mean()
-        if benchmark_time: 
+
+        result = sw_sorted_jax_differentiable(apply_background_and_dose(image_1, noise_dose, noise_background), image_ref, grid, sliced_wasserstein.n_projections, sliced_wasserstein.n_pixels, sliced_wasserstein.normalize_safely_epsilon, key).mean()
+        if benchmark_time:
             sw_time = time() - s
             logger.debug(f"sw_time: {sw_time:.4f} seconds")
 
@@ -302,14 +317,14 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         # plt.savefig("debug_image_ref.png")
         # plt.clf()
         if benchmark_time: s = time()
-        result = l2_loss(noise.dose*(image_1 + noise.background)/noise.dose, image_ref/noise.dose) # normalize by dose to not affect learning rate
+        result = l2_loss(apply_background_and_dose(image_1, noise_dose, noise_background)/noise_dose, image_ref/noise_dose) # normalize by dose to not affect learning rate
         if benchmark_time: 
             l2_time = time() - s
             logger.debug(f"l2_time: {l2_time:.4f} seconds")
         return result
     elif use_this_objective == 'sw_cdf':
         if benchmark_time: s = time()
-        result = jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+        result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise_dose, noise_background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='cdf'
@@ -320,7 +335,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         return result
     elif use_this_objective == 'sw_dsort':
         if benchmark_time: s = time()
-        result = jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+        result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise.dose, noise.background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='dsort'
@@ -331,7 +346,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         return result
     elif use_this_objective == 'sw_icdf':
         if benchmark_time: s = time()
-        result = jax_backend.wasserstein_distance_loss_images(noise.dose*(image_1 + noise.background).reshape(1, n_pix, n_pix), 
+        result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise_dose, noise_background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='icdf'
@@ -463,7 +478,8 @@ def main(cfg: FullConfig):
             use_this_objective=config.optimization.use_this_objective,
             grid=grid,
             sliced_wasserstein=config.optimization.sliced_wasserstein,
-            noise=config.inference_model.noise,
+            noise_dose=config.inference_model.noise.dose,
+            noise_background=config.inference_model.noise.background,
             key=key,
         )
 
@@ -480,6 +496,8 @@ def main(cfg: FullConfig):
     ).rotation.wxyz
     offset_x_in_angstroms = jnp.array(config.inference_model.initial_estimates.pose.translation.offset_x_in_angstroms)
     offset_y_in_angstroms = jnp.array(config.inference_model.initial_estimates.pose.translation.offset_y_in_angstroms)
+    noise_dose = jnp.array(config.inference_model.noise.dose)
+    noise_background = jnp.array(config.inference_model.noise.background)
 
     params0 = OptParams(
         cv=cv,
@@ -487,6 +505,8 @@ def main(cfg: FullConfig):
         wxyz=wxyz,
         offset_x_in_angstroms=offset_x_in_angstroms,
         offset_y_in_angstroms=offset_y_in_angstroms,
+        noise_dose=noise_dose,
+        noise_background=noise_background,
     )
 
     def optimization(optimization_cfg, key, initial_params: OptParams):
@@ -500,6 +520,8 @@ def main(cfg: FullConfig):
         offset_xs = []
         offset_ys = []
         geodesic_angles = [] # from unit quaternion
+        noise_doses = []
+        noise_backgrounds = []
 
         params = initial_params
         preconditioner = optimization_cfg.preconditioner[optimization_cfg.use_this_objective]
@@ -521,6 +543,8 @@ def main(cfg: FullConfig):
             offset_xs.append(float(params.offset_x_in_angstroms))
             offset_ys.append(float(params.offset_y_in_angstroms))
             geodesic_angles.append(float(unnormalized_quaternion_to_geodesic(params.wxyz)))
+            noise_doses.append(float(params.noise_dose))
+            noise_backgrounds.append(float(params.noise_background))
 
             # SGD-like update (apply preconditioning factors from config)
             if optimization_cfg.optimize_these_variables.cv:
@@ -543,12 +567,18 @@ def main(cfg: FullConfig):
             else:
                 offset_x_new = params.offset_x_in_angstroms
                 offset_y_new = params.offset_y_in_angstroms
+            if optimization_cfg.optimize_these_variables.noise_dose:
+                noise_dose_new = params.noise_dose - lr * grads.noise_dose * preconditioner.noise_dose
+            if optimization_cfg.optimize_these_variables.noise_background:
+                noise_background_new = params.noise_background - lr * grads.noise_background * preconditioner.noise_background
             params = OptParams(
                 cv=cv_new,
                 defocus=defocus_new,
                 wxyz=wxyz_new,
                 offset_x_in_angstroms=offset_x_new,
                 offset_y_in_angstroms=offset_y_new,
+                noise_dose=noise_dose_new,
+                noise_background=noise_background_new,
             )
 
             if i % optimization_cfg.print_every == 0:
@@ -559,11 +589,15 @@ def main(cfg: FullConfig):
                     f"wxyz=({float(params.wxyz[0]):.6f}, {float(params.wxyz[1]):.6f}, {float(params.wxyz[2]):.6f}, {float(params.wxyz[3]):.6f}), "
                     f"geodesic_angle={geodesic_angles[-1]:.3f} degrees, "
                     f"euler_angles_deg=({euler_angles_deg[0]:.2f}, {euler_angles_deg[1]:.2f}, {euler_angles_deg[2]:.2f}), "
+                    f"noise_dose={float(params.noise_dose):.6f}, noise_background={float(params.noise_background):.6f}, "
+                    f"noise_background={float(params.noise_background):.6f}, "
                     f"grad_cv={float(grads.cv):.2e}, "
                     f"grad_defocus={float(grads.defocus):.2e}, "
                     f"grad_offset_x={float(grads.offset_x_in_angstroms):.2e}, "
                     f"grad_offset_y={float(grads.offset_y_in_angstroms):.2e}, "
-                    f"grad_wxyz=({float(grads.wxyz[0]):.2e}, {float(grads.wxyz[1]):.2e}, {float(grads.wxyz[2]):.2e}, {float(grads.wxyz[3]):.2e})",
+                    f"grad_wxyz=({float(grads.wxyz[0]):.2e}, {float(grads.wxyz[1]):.2e}, {float(grads.wxyz[2]):.2e}, {float(grads.wxyz[3]):.2e}), "
+                    f"grad_noise_dose={float(grads.noise_dose):.2e}, "
+                    f"grad_noise_background={float(grads.noise_background):.2e}",
                 )
         logger.info(f"Average time per iteration for {optimization_cfg.use_this_objective}: {total_time / n_iters:.4f} seconds")
 
@@ -575,10 +609,12 @@ def main(cfg: FullConfig):
             jnp.array(geodesic_angles),
             jnp.array(offset_xs),
             jnp.array(offset_ys),
+            jnp.array(noise_doses),
+            jnp.array(noise_backgrounds),
         )
 
     start = time()
-    losses, cvs, defoci, wxyzs, geodesic_angles, offset_xs, offset_ys = optimization(config.optimization, key, params0)
+    losses, cvs, defoci, wxyzs, geodesic_angles, offset_xs, offset_ys, noise_doses, noise_backgrounds = optimization(config.optimization, key, params0)
     end = time()
     logger.info(f"Optimization took {end - start:.2f} seconds.")
     logger.info(f'Output in {run_dir}')
@@ -626,6 +662,8 @@ def main(cfg: FullConfig):
              geodesic_angles=geodesic_angles,
              offset_xs=offset_xs,
              offset_ys=offset_ys,
+             noise_doses=noise_doses,
+             noise_backgrounds=noise_backgrounds
     )
     pd.DataFrame({
         "losses": losses,
@@ -638,6 +676,8 @@ def main(cfg: FullConfig):
         "geodesic_angles": geodesic_angles,
         "offset_xs": offset_xs,
         "offset_ys": offset_ys,
+        "noise_doses": noise_doses,
+        "noise_backgrounds": noise_backgrounds
     }).to_csv(os.path.join(run_dir, "data/joint_gradient_descent_traces.csv"), index=False)
     label = config.optimization.use_this_objective
     plt.plot(losses, label=label)
