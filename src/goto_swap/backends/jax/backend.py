@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import dm_pix
 from flax import nnx
 
-from goto_swap.backends.jax.fourier_slice import fourier_slice_2d_to_1d
+from goto_swap.backends.jax.fourier_slice import fourier_slice_2d_to_1d, fourier_slice_2d_to_1d_precompute, fourier_slice_2d_to_1d_postcompute
 
 from .. import BackendInterface
 from .emd import emd_1d_sorted_jax_differentiable
@@ -88,13 +88,49 @@ class JAXBackend(BackendInterface):
             strips_x_true_pos, strips_x_true_neg = rotated_x_true_pos.sum(axis=-1), rotated_x_true_neg.sum(axis=-1)  # (B, n_proj, n)
 
         elif projection_method == 'fourier_slice':
-            fourier_slice_batch_over_rotations = jax.vmap(
-                lambda img, angle: fourier_slice_2d_to_1d(img, angle),
+
+
+            # fourier_slice_batch_over_rotations = jax.vmap(
+            #     lambda img, angle: fourier_slice_2d_to_1d(img, angle),
+            #     in_axes=(None, 0),
+            # )
+
+            # fourier_slice_fn = jax.vmap(
+            #     lambda imgs, angles: fourier_slice_batch_over_rotations(imgs, angles),
+            #     in_axes=(0, None),
+            # )
+
+            # in_plane_rotations = jnp.linspace(
+            #     0, jnp.pi, num_rotations, endpoint=False
+            # )
+
+            # sliced_x = fourier_slice_fn(x, in_plane_rotations)
+            # sliced_x_true = fourier_slice_fn(x_true, in_plane_rotations)
+
+            # Precompute once per image
+            fourier_x = jax.vmap(
+                lambda img: fourier_slice_2d_to_1d_precompute(
+                    img, output_size=None
+                )
+            )(x)
+
+            fourier_x_true = jax.vmap(
+                lambda img: fourier_slice_2d_to_1d_precompute(
+                    img, output_size=None
+                )
+            )(x_true)
+
+            # Map over angles, reusing the precomputed Fourier transforms
+            postcompute_batch = jax.vmap(
+                lambda fourier, angle: fourier_slice_2d_to_1d_postcompute(
+                    fourier, angle=angle, output_size=None
+                ),
                 in_axes=(None, 0),
             )
 
-            fourier_slice_fn = jax.vmap(
-                lambda imgs, angles: fourier_slice_batch_over_rotations(imgs, angles),
+            # Map over images
+            postcompute = jax.vmap(
+                lambda fourier, angles: postcompute_batch(fourier, angles),
                 in_axes=(0, None),
             )
 
@@ -102,8 +138,8 @@ class JAXBackend(BackendInterface):
                 0, jnp.pi, num_rotations, endpoint=False
             )
 
-            sliced_x = fourier_slice_fn(x, in_plane_rotations)
-            sliced_x_true = fourier_slice_fn(x_true, in_plane_rotations)
+            sliced_x = postcompute(fourier_x, in_plane_rotations).real
+            sliced_x_true = postcompute(fourier_x_true, in_plane_rotations).real
 
             # split in positive and negative
             strips_x_pos, strips_x_neg = nnx.relu(sliced_x), nnx.relu(-sliced_x)
