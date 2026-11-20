@@ -23,6 +23,7 @@ class PyTorchBackend(BackendInterface):
         self, 
         x: torch.Tensor, 
         x_true: torch.Tensor, 
+        method: str,
         num_rotations: int = 100
     ) -> torch.Tensor:
         """

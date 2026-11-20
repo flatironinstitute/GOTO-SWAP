@@ -17,7 +17,7 @@ jax_backend = get_backend("jax")
 
 from cryojax.io import read_atoms_from_pdb
 import cryojax.simulator as cxs
-from cryojax.ndimage import FourierGaussian
+from cryojax.ndimage.operators import FourierGaussian
 from cryojax.rotations import convert_quaternion_to_euler_angles
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,8 @@ class PreconditionerConfig:
     defocus: float
     quaternion: float
     offset: float
+    noise_dose: float
+    noise_background: float
 
 
 @dataclass
@@ -123,6 +125,8 @@ class OptimizeTheseVariablesConfig:
     defocus: bool
     rotation: bool
     translation: bool
+    noise_dose: bool
+    noise_background: bool
 
 
 @dataclass
@@ -227,10 +231,12 @@ def apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angst
     # n_atoms = image_model.volume.positions.shape[0]
     # bool_mask = jnp.arange(n_atoms) < 863
     # integer_indices = jnp.where(bool_mask)[0]
-    new_positions = separate_cv(image_model.volume.positions, normal=jnp.array([18.338715,   -9.431992,  -10.780163]), 
+    print('BEFORE BUG', image_model)
+    new_positions = separate_cv(image_model.volume_parametrisation.positions, normal=jnp.array([18.338715,   -9.431992,  -10.780163]), 
                                 tear_amount=cv_scalar)
-    image_model_updated = eqx.tree_at(lambda im: im.volume.positions, image_model, new_positions)
-    image_model_updated = eqx.tree_at(lambda im: im.pose.offset_in_angstroms, image_model_updated, jnp.array([offset_x_in_angstroms, offset_y_in_angstroms]))
+    image_model_updated = eqx.tree_at(lambda im: im.volume_parametrisation.positions, image_model, new_positions)
+    image_model_updated = eqx.tree_at(lambda im: im.pose.offset_x_in_angstroms, image_model_updated, offset_x_in_angstroms)
+    image_model_updated = eqx.tree_at(lambda im: im.pose.offset_y_in_angstroms, image_model_updated, offset_y_in_angstroms)
     image_model_updated = eqx.tree_at(lambda im: im.pose.wxyz, image_model_updated, wxyz)
     image_model_updated = eqx.tree_at(lambda im: im.scattering_theory.transfer_theory.ctf.defocus_in_angstroms, image_model_updated, defocus_scalar)
     return image_model_updated
@@ -276,6 +282,36 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
     benchmark_time = False
     if benchmark_time: s = time()
     image_1 = apply_all_cv(image_model, wxyz, cv_scalar, defocus_scalar, offset_x_in_angstroms, offset_y_in_angstroms).simulate()
+
+    optimal_b_d = False
+    if optimal_b_d:
+        def optimal_noise_d_b(image_ref, image_1):
+            # undo image_1 = dose * (image_1 + background)
+            image_1_bar = jnp.mean(image_1)
+            image_ref_bar = jnp.mean(image_ref)
+            image_ref_centered = image_ref - image_ref_bar
+            image_1_centered = image_1 - image_1_bar
+            optimal_dose = jnp.sum(image_ref_centered * image_1_centered) / jnp.sum(image_1_centered ** 2)
+            optimal_background = image_ref_bar/optimal_dose - image_1_bar
+            image_1_optimal = optimal_dose * (image_1 + optimal_background)
+            return optimal_dose, optimal_background, image_1_optimal
+
+        optimal_dose, optimal_background, image_1_optimal = optimal_noise_d_b(image_ref, image_1)
+        l2_loss_optimal = jnp.linalg.norm(image_1_optimal - image_ref)
+        l2_loss_unoptimal = jnp.linalg.norm(noise_dose * (image_1 + noise_background) - image_ref)
+        jax.debug.print(
+            "dose: {noise_dose:.4f}, background: {noise_background:.4f}, "
+            "optimal_dose: {optimal_dose:.4f}, "
+            "optimal_background: {optimal_background:.4f}, "
+            "l2_loss_optimal: {l2_loss_optimal:.4f}, "
+            "l2_loss_unoptimal: {l2_loss_unoptimal:.4f}",
+            noise_dose=noise_dose,
+            noise_background=noise_background,
+            optimal_dose=optimal_dose,
+            optimal_background=optimal_background,
+            l2_loss_optimal=l2_loss_optimal,
+            l2_loss_unoptimal=l2_loss_unoptimal,
+        )    
     if benchmark_time: 
         simulate_time = time() - s
         logger.debug(f"simulate_time: {simulate_time:.4f} seconds")
@@ -317,7 +353,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         # plt.savefig("debug_image_ref.png")
         # plt.clf()
         if benchmark_time: s = time()
-        result = l2_loss(apply_background_and_dose(image_1, noise_dose, noise_background)/noise_dose, image_ref/noise_dose) # normalize by dose to not affect learning rate
+        result = l2_loss(apply_background_and_dose(image_1, noise_dose, noise_background), image_ref) # normalize by dose to not affect learning rate
         if benchmark_time: 
             l2_time = time() - s
             logger.debug(f"l2_time: {l2_time:.4f} seconds")
@@ -335,7 +371,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         return result
     elif use_this_objective == 'sw_dsort':
         if benchmark_time: s = time()
-        result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise.dose, noise.background).reshape(1, n_pix, n_pix), 
+        result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise_dose, noise_background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
                                                      method='dsort'
@@ -383,7 +419,7 @@ def main(cfg: FullConfig):
             specimen.pdb_file, 
             center=specimen.center, 
             selection_string=specimen.selection_string,
-            loads_properties=False
+            # loads_properties=False
         )
         return atom_positions
     atom_positions = setup_specimen(config.setup.specimen)
@@ -419,6 +455,7 @@ def main(cfg: FullConfig):
         transfer_theory=cxs.ContrastTransferTheory(cxs.AstigmaticCTF(defocus_in_angstroms=config.setup.ctf.defocus_in_angstroms),
                                                    envelope = FourierGaussian(amplitude=config.setup.envelope.amplitude, b_factor=config.setup.envelope.b_factor),
                                                    ),
+        simulates_quantity=True,
         quantity_mode='intensity'
     )
     # print(image_model)
@@ -465,6 +502,8 @@ def main(cfg: FullConfig):
         wxyz: jnp.ndarray
         offset_x_in_angstroms: jnp.ndarray
         offset_y_in_angstroms: jnp.ndarray
+        noise_dose: jnp.ndarray
+        noise_background: jnp.ndarray
 
     def loss_for_params(params: OptParams, key):
         return loss_for_pose_and_cv(
@@ -478,8 +517,8 @@ def main(cfg: FullConfig):
             use_this_objective=config.optimization.use_this_objective,
             grid=grid,
             sliced_wasserstein=config.optimization.sliced_wasserstein,
-            noise_dose=config.inference_model.noise.dose,
-            noise_background=config.inference_model.noise.background,
+            noise_dose=params.noise_dose,
+            noise_background=params.noise_background,
             key=key,
         )
 
@@ -569,8 +608,14 @@ def main(cfg: FullConfig):
                 offset_y_new = params.offset_y_in_angstroms
             if optimization_cfg.optimize_these_variables.noise_dose:
                 noise_dose_new = params.noise_dose - lr * grads.noise_dose * preconditioner.noise_dose
+                noise_dose_new = jnp.clip(noise_dose_new, a_min=1e-6)  # Ensure noise dose remains positive
+            else:
+                noise_dose_new = params.noise_dose
             if optimization_cfg.optimize_these_variables.noise_background:
                 noise_background_new = params.noise_background - lr * grads.noise_background * preconditioner.noise_background
+                noise_background_new = jnp.clip(noise_background_new, a_min=0.0)  # Ensure noise background remains non-negative
+            else:
+                noise_background_new = params.noise_background
             params = OptParams(
                 cv=cv_new,
                 defocus=defocus_new,
@@ -590,7 +635,6 @@ def main(cfg: FullConfig):
                     f"geodesic_angle={geodesic_angles[-1]:.3f} degrees, "
                     f"euler_angles_deg=({euler_angles_deg[0]:.2f}, {euler_angles_deg[1]:.2f}, {euler_angles_deg[2]:.2f}), "
                     f"noise_dose={float(params.noise_dose):.6f}, noise_background={float(params.noise_background):.6f}, "
-                    f"noise_background={float(params.noise_background):.6f}, "
                     f"grad_cv={float(grads.cv):.2e}, "
                     f"grad_defocus={float(grads.defocus):.2e}, "
                     f"grad_offset_x={float(grads.offset_x_in_angstroms):.2e}, "
@@ -665,6 +709,7 @@ def main(cfg: FullConfig):
              noise_doses=noise_doses,
              noise_backgrounds=noise_backgrounds
     )
+    euler_angles = jnp.array([convert_quaternion_to_euler_angles(w) for w in wxyzs])
     pd.DataFrame({
         "losses": losses,
         "cvs": cvs,
@@ -673,6 +718,9 @@ def main(cfg: FullConfig):
         "wxyz_1": wxyzs[:,1],
         "wxyz_2": wxyzs[:,2],
         "wxyz_3": wxyzs[:,3],
+        'euler_angle_0': euler_angles[:,0],
+        'euler_angle_1': euler_angles[:,1],
+        'euler_angle_2': euler_angles[:,2],
         "geodesic_angles": geodesic_angles,
         "offset_xs": offset_xs,
         "offset_ys": offset_ys,
@@ -729,6 +777,33 @@ def main(cfg: FullConfig):
     plt.legend()
     plt.savefig(os.path.join(run_dir, "plots/offset_y_curve.png"))
     plt.clf()
+
+    plt.plot(noise_doses, label=label)
+    plt.axhline(
+        y=config.setup.noise.dose,
+        color='gray',
+        linestyle='--',
+        label='Ground Truth',
+    )
+    plt.xlabel("Gradient step")
+    plt.ylabel("Noise dose")
+    plt.legend()
+    plt.savefig(os.path.join(run_dir, "plots/noise_dose_curve.png"))
+    plt.clf()
+
+    plt.plot(noise_backgrounds, label=label)
+    plt.axhline(
+        y=config.setup.noise.background,
+        color='gray',
+        linestyle='--',
+        label='Ground Truth',
+    )
+    plt.xlabel("Gradient step")
+    plt.ylabel("Noise background")
+    plt.legend()
+    plt.savefig(os.path.join(run_dir, "plots/noise_background_curve.png"))
+    plt.clf()
+
     
     return None
 

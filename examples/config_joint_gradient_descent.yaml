@@ -34,20 +34,22 @@ setup:
 
 
 optimization:
-    learning_rate: 1
+    learning_rate: 0.00012
     n_iterations: 5000
-    print_every: 100
-    use_this_objective: sw_cdf
+    print_every: 10
+    use_this_objective: sw_dsort
     sliced_wasserstein:
         n_projections: 10
         n_pixels: 1000
         normalize_safely_epsilon: 1e-8
     preconditioner: 
-      l2: # lr 1
+      l2: # lr 0.00001
         cv: 10
         defocus: 1e4
         quaternion: 0.01
         offset: 1
+        noise_dose: 1e3
+        noise_background: 0.0001
       sw: # sw with lr 0.01 and n_iterations 100 np 30, np 300
         cv: 300.0
         defocus: 1000000.0 # maybe higher?
@@ -58,19 +60,23 @@ optimization:
         defocus: 1e11
         quaternion: 1e4
         offset: 1e6
+        noise_dose: 0
+        noise_background: 5e4
       sw_icdf: ${optimization.preconditioner.sw_cdf} # lr: 0.01
-      sw_dsort: ${optimization.preconditioner.sw_cdf} # lr:  0.0001
+      sw_dsort: ${optimization.preconditioner.sw_cdf} # lr:  0.00012
     optimize_these_variables:
       cv: true
       defocus: true
       rotation: true
       translation: true
+      noise_dose: false
+      noise_background: true
 
 
 inference_model:
     noise:
         dose: ${setup.noise.dose}
-        background: ${setup.noise.background}
+        background: 10 #${setup.noise.background}
     initial_estimates:
         cv:
             type: ${setup.cv.type}
@@ -78,11 +84,11 @@ inference_model:
         pose:
             euler_angles_deg:
               phi_angle: 20 #${setup.pose.euler_angles_deg.phi_angle}
-              theta_angle: 20 # ${setup.pose.euler_angles_deg.theta_angle}
-              psi_angle: 20 # ${setup.pose.euler_angles_deg.psi_angle}
+              theta_angle: 20 #${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: 20 #${setup.pose.euler_angles_deg.psi_angle}
             translation:
-              offset_x_in_angstroms: -10 # ${setup.pose.translation.offset_x_in_angstroms}
-              offset_y_in_angstroms: -10 # ${setup.pose.translation.offset_y_in_angstroms}
+              offset_x_in_angstroms: -10 #${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: -10 #${setup.pose.translation.offset_y_in_angstroms}
         ctf:
             defocus_in_angstroms: 7000 #${setup.ctf.defocus_in_angstroms}
             voltage: ${setup.ctf.voltage}
