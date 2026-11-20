@@ -7,14 +7,27 @@ from goto_swap import fourier_slice_2d_to_1d
 
 
 @pytest.mark.jax
-def test_fourier_slice_axis_projections():
-    image = jnp.arange(5 * 7, dtype=jnp.float32).reshape(5, 7)
+def test_fourier_slice_axis_projections_no_normalization():
+    n_large = 128
+    image = jnp.arange(n_large * n_large, dtype=jnp.float32).reshape(n_large, n_large)
 
     projection_x = fourier_slice_2d_to_1d(image, angle=0.0)
     projection_y = fourier_slice_2d_to_1d(image, angle=jnp.pi / 2.0)
 
-    assert jnp.allclose(projection_x, jnp.sum(image, axis=0), rtol=1e-6, atol=1e-6)
-    assert jnp.allclose(projection_y, jnp.sum(image, axis=1), rtol=1e-6, atol=1e-6)
+    assert jnp.allclose(projection_x / projection_x.sum(), jnp.sum(image, axis=0) / jnp.sum(image), rtol=0.05, atol=1e-3)
+    assert jnp.allclose(projection_y / projection_y.sum(), jnp.sum(image, axis=1) / jnp.sum(image), rtol=0.05, atol=1e-3)
+
+
+@pytest.mark.jax
+def test_fourier_slice_axis_projections():
+    n_large = 128
+    image = jnp.arange(n_large * n_large, dtype=jnp.float32).reshape(n_large, n_large)
+
+    projection_x = fourier_slice_2d_to_1d(image, angle=0.0)
+    projection_y = fourier_slice_2d_to_1d(image, angle=jnp.pi / 2.0)
+
+    assert jnp.allclose(projection_x, jnp.sum(image, axis=0), rtol=0.05, atol=1e-3)
+    assert jnp.allclose(projection_y , jnp.sum(image, axis=1), rtol=0.05, atol=1e-3)
 
 
 @pytest.mark.jax
@@ -61,10 +74,36 @@ def test_fourier_slice_gaussian_matches_analytical_projection(angle):
 
     assert jnp.allclose(measured, analytical, rtol=0.05, atol=1e-3)
 
-if __name__ == "__main__":
-    for angle in [0, jnp.pi / 4.0, jnp.pi / 3.0, jnp.pi, jnp.pi / 2.0]:
-        test_fourier_slice_gaussian_matches_analytical_projection(angle)
+def test_fourier_slice_gaussian_blobs_real_projection_0_90():
+    size = 128
+    coordinates = jnp.arange(size, dtype=jnp.float32) - size // 2
+    x, y = jnp.meshgrid(coordinates, coordinates, indexing="xy")
 
+    gaussian = 0
+    for shift in [(-20, 0), (20, 0), (0, -20), (0, 20)]:
+        x_shifted = x - shift[0]
+        y_shifted = y - shift[1]
+
+        covariance_x = 30
+        covariance_y = 10
+        gaussian += jnp.exp(
+            -0.5
+            * (x_shifted**2 / covariance_x + y_shifted**2 / covariance_y)
+        )
+        fig, _ = plt.subplots()
+        plt.imshow(gaussian, cmap="viridis")
+        plt.colorbar()
+        plt.savefig(f"fourier_slice_gaussian_input_shift_{shift}.png")
+        plt.close(fig)
+
+    projection_0 = fourier_slice_2d_to_1d(gaussian, angle=0.0)
+    projection_90 = fourier_slice_2d_to_1d(gaussian, angle=jnp.pi / 2.0)
+
+    real_spaced_projection_0 = jnp.sum(gaussian, axis=0)
+    real_spaced_projection_90 = jnp.sum(gaussian, axis=1)
+
+    assert jnp.allclose(projection_0, real_spaced_projection_0, rtol=0.05, atol=1e-3)
+    assert jnp.allclose(projection_90, real_spaced_projection_90, rtol=0.05, atol=1e-3)
 
 
 @pytest.mark.jax

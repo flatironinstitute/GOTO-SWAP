@@ -13,7 +13,10 @@ def _bilinear_sample(image: jnp.ndarray, y: jnp.ndarray, x: jnp.ndarray) -> jnp.
     y1 = y0 + 1
     x1 = x0 + 1
 
-    inside = (y0 >= 0) & (y1 < height) & (x0 >= 0) & (x1 < width)
+    inside = (
+    (y >= 0) & (y <= height - 1)
+    & (x >= 0) & (x <= width - 1)
+)
     safe_y0 = jnp.clip(y0, 0, height - 1)
     safe_y1 = jnp.clip(y1, 0, height - 1)
     safe_x0 = jnp.clip(x0, 0, width - 1)
@@ -65,14 +68,14 @@ def fourier_slice_2d_to_1d(
     is_static = not isinstance(angle_array, jax.core.Tracer)
 
     periodic_angle = jnp.mod(angle_array, jnp.pi)
-    near_zero = jnp.isclose(periodic_angle, 0.0, rtol=0.0, atol=1e-6)
-    near_90 = jnp.isclose(periodic_angle, jnp.pi / 2.0, rtol=0.0, atol=1e-6)
+    # near_zero = jnp.isclose(periodic_angle, 0.0, rtol=0.0, atol=1e-6)
+    # near_90 = jnp.isclose(periodic_angle, jnp.pi / 2.0, rtol=0.0, atol=1e-6)
 
-    if is_static:
-        if near_zero:
-            return jnp.sum(image, axis=0)
-        if near_90:
-            return jnp.sum(image, axis=1)
+    # if is_static:
+    #     if near_zero:
+    #         return jnp.sum(image, axis=0)
+    #     if near_90:
+    #         return jnp.sum(image, axis=1)
 
     height, width = image.shape
     n = output_size if output_size is not None else max(image.shape)
