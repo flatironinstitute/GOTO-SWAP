@@ -1,7 +1,6 @@
 import jax
 import jax.numpy as jnp
 import pytest
-import matplotlib.pyplot as plt
 
 from goto_swap import fourier_slice_2d_to_1d
 
@@ -43,11 +42,7 @@ def test_fourier_slice_gaussian_matches_analytical_projection(angle):
         -0.5
         * (x**2 / covariance_x + y**2 / covariance_y)
     )
-    fig, _ = plt.subplots()
-    plt.imshow(gaussian, cmap="viridis")
-    plt.colorbar()
-    plt.savefig("fourier_slice_gaussian_input.png")
-    plt.close(fig)
+
 
     projection = fourier_slice_2d_to_1d(gaussian, angle=angle)
     projected_coordinate = jnp.arange(size, dtype=jnp.float32) - size // 2
@@ -64,13 +59,6 @@ def test_fourier_slice_gaussian_matches_analytical_projection(angle):
     measured = measured / jnp.sum(measured)
     analytical = analytical / jnp.sum(analytical)
 
-    # fig, _ = plt.subplots()
-    # plt.plot(measured, label="Measured")
-    # plt.plot(analytical, label="Analytical")
-    # plt.legend()
-    # plt.title(f"Angle: {angle:.2f} rad")
-    # plt.savefig(f"fourier_slice_gaussian_angle_{angle:.2f}.png")
-    # plt.close(fig)
 
     assert jnp.allclose(measured, analytical, rtol=0.05, atol=1e-3)
 
@@ -90,11 +78,7 @@ def test_fourier_slice_gaussian_blobs_real_projection_0_90():
             -0.5
             * (x_shifted**2 / covariance_x + y_shifted**2 / covariance_y)
         )
-        fig, _ = plt.subplots()
-        plt.imshow(gaussian, cmap="viridis")
-        plt.colorbar()
-        plt.savefig(f"fourier_slice_gaussian_input_shift_{shift}.png")
-        plt.close(fig)
+
 
     projection_0 = fourier_slice_2d_to_1d(gaussian, angle=0.0)
     projection_90 = fourier_slice_2d_to_1d(gaussian, angle=jnp.pi / 2.0)

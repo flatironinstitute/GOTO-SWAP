@@ -2,7 +2,6 @@
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 
 def _bilinear_sample(image: jnp.ndarray, y: jnp.ndarray, x: jnp.ndarray) -> jnp.ndarray:
     """Sample a 2D array at floating-point row and column coordinates."""
@@ -68,14 +67,14 @@ def fourier_slice_2d_to_1d(
     is_static = not isinstance(angle_array, jax.core.Tracer)
 
     periodic_angle = jnp.mod(angle_array, jnp.pi)
-    # near_zero = jnp.isclose(periodic_angle, 0.0, rtol=0.0, atol=1e-6)
-    # near_90 = jnp.isclose(periodic_angle, jnp.pi / 2.0, rtol=0.0, atol=1e-6)
+    near_zero = jnp.isclose(periodic_angle, 0.0, rtol=0.0, atol=1e-6)
+    near_90 = jnp.isclose(periodic_angle, jnp.pi / 2.0, rtol=0.0, atol=1e-6)
 
-    # if is_static:
-    #     if near_zero:
-    #         return jnp.sum(image, axis=0)
-    #     if near_90:
-    #         return jnp.sum(image, axis=1)
+    if is_static:
+        if near_zero:
+            return jnp.sum(image, axis=0)
+        if near_90:
+            return jnp.sum(image, axis=1)
 
     height, width = image.shape
     n = output_size if output_size is not None else max(image.shape)
@@ -85,45 +84,11 @@ def fourier_slice_2d_to_1d(
     image_unshifted = jnp.fft.ifftshift(image)
     fourier = jnp.fft.fftshift(jnp.fft.fft2(image_unshifted))
 
-    # # plot real and image fourier
-    # fig = plt.figure()
-    # plt.imshow(jnp.real(fourier), cmap="viridis")
-    # plt.colorbar()
-    # plt.savefig("fourier_slice_fourier_real.png")
-    # plt.close(fig)
-
-    # # central slice
-    # central_slice = fourier[fourier.shape[0] // 2, :]
-    # fig = plt.figure()
-    # plt.plot(central_slice.real, label="real")
-    # plt.plot(central_slice.imag, label="imag")
-    # plt.plot(jnp.abs(central_slice), label="magnitude")
-    # plt.legend()
-    # plt.savefig("fourier_slice_central_slice.png")
-    # plt.close(fig)
-
-    # fig = plt.figure()
-    # plt.imshow(jnp.imag(fourier), cmap="viridis")
-    # plt.colorbar()
-    # plt.savefig("fourier_slice_fourier_imag.png")
-    # plt.close(fig)
-
     fx = jnp.cos(angle) * frequency_offset / n
     fy = jnp.sin(angle) * frequency_offset / n
 
     x_coordinate = fx * width + width // 2
     y_coordinate = fy * height + height // 2
-
-    
-    # fig = plt.figure()
-    # plt.plot(x_coordinate, )
-    # plt.savefig("fourier_slice_x_coordinate.png")
-    # plt.close(fig)
-
-    # fig = plt.figure()
-    # plt.plot(y_coordinate, )
-    # plt.savefig("fourier_slice_y_coordinate.png")
-    # plt.close(fig)
 
     sliced = _bilinear_sample(
         fourier,
