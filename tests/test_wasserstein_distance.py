@@ -36,14 +36,16 @@ class TestWassersteinDistanceImages:
             import jax.numpy as jnp
             x_jax = jnp.array(x)
             x_true_jax = jnp.array(x_true)
-            
-            loss = wasserstein_distance_loss_images(x_jax, x_true_jax, method='dsort', num_rotations=10).sum()
-            
-            assert isinstance(loss, jnp.ndarray)
-            assert loss.shape == ()  # Scalar
-            assert not np.isnan(float(loss))
-            assert not np.isinf(float(loss))
-            assert float(loss) >= 0  # Non-negative loss
+
+            for method in ['cdf', 'icdf', 'dsort']:
+                loss = wasserstein_distance_loss_images(x_jax, x_true_jax, method=method, num_rotations=10).sum()
+                
+                assert isinstance(loss, jnp.ndarray)
+                assert loss.shape == ()  # Scalar
+                assert not np.isnan(float(loss))
+                assert not np.isinf(float(loss))
+                assert float(loss) >= 0  # Non-negative loss
+
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -77,8 +79,9 @@ class TestWassersteinDistanceImages:
             x_jax = jnp.array(x)
             
             # Test with identical images
-            loss = wasserstein_distance_loss_images(x_jax, x_jax, method='dsort', num_rotations=10).sum()
-            assert float(loss) < 1e-6, f"Identical images should have near-zero loss, got {float(loss)}"
+            for method in ['cdf', 'icdf', 'dsort']:
+                loss = wasserstein_distance_loss_images(x_jax, x_jax, method=method, num_rotations=10).sum()
+                assert float(loss) < 1e-6, f"Identical images should have near-zero loss, got {float(loss)}"
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -93,20 +96,21 @@ class TestWassersteinDistanceImages:
             x_true_jax = jnp.array(x_true)
             
             # Test with different rotation counts
-            loss_10 = wasserstein_distance_loss_images(x_jax, x_true_jax, method='dsort', num_rotations=10).sum()
-            loss_20 = wasserstein_distance_loss_images(x_jax, x_true_jax, method='dsort', num_rotations=20).sum()
-            loss_50 = wasserstein_distance_loss_images(x_jax, x_true_jax, method='dsort', num_rotations=50).sum()
+            for method in ['cdf', 'icdf', 'dsort']:
+                loss_10 = wasserstein_distance_loss_images(x_jax, x_true_jax, method=method, num_rotations=10).sum()
+                loss_20 = wasserstein_distance_loss_images(x_jax, x_true_jax, method=method, num_rotations=20).sum()
+                loss_50 = wasserstein_distance_loss_images(x_jax, x_true_jax, method=method, num_rotations=50).sum()
             
-            # More rotations should generally give more accurate results
-            # but the results should be in the same ballpark
-            assert not np.isnan(float(loss_10))
-            assert not np.isnan(float(loss_20))
-            assert not np.isnan(float(loss_50))
-            
-            # All should be non-negative
-            assert float(loss_10) >= 0
-            assert float(loss_20) >= 0
-            assert float(loss_50) >= 0
+                # More rotations should generally give more accurate results
+                # but the results should be in the same ballpark
+                assert not np.isnan(float(loss_10))
+                assert not np.isnan(float(loss_20))
+                assert not np.isnan(float(loss_50))
+                
+                # All should be non-negative
+                assert float(loss_10) >= 0
+                assert float(loss_20) >= 0
+                assert float(loss_50) >= 0
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -122,16 +126,18 @@ class TestWassersteinDistanceImages:
             # JAX computation
             x_jax = jnp.array(x)
             x_true_jax = jnp.array(x_true)
-            loss_jax = wasserstein_distance_loss_images(x_jax, x_true_jax, method='dsort', num_rotations=10).sum()
             
             # PyTorch computation
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
             loss_pytorch = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", num_rotations=10).sum()
+
+            for method in ['cdf', 'icdf', 'dsort']:
+                loss_jax = wasserstein_distance_loss_images(x_jax, x_true_jax, method=method, num_rotations=10).sum()
             
-            # Results should be numerically close
-            diff = abs(float(loss_jax) - float(loss_pytorch))
-            assert diff < 1e-5, f"JAX and PyTorch results differ by {diff}"
+                # Results should be numerically close
+                diff = abs(float(loss_jax) - float(loss_pytorch))
+                assert diff < 1e-5, f"JAX and PyTorch results differ by {diff}"
             
         except ImportError as e:
             pytest.skip(f"Backend comparison not available: {e}")
@@ -149,10 +155,13 @@ class TestWassersteinDistanceImages:
             
             # Test gradient computation
             grad_fn = jax.grad(lambda x_jax, x_true_jax, method, num_rotations: jnp.sum(wasserstein_distance_loss_images(x_jax, x_true_jax, method, num_rotations)), argnums=0)
-            gradients = grad_fn(x_jax, x_true_jax, method='dsort', num_rotations=10)
-            
-            assert gradients.shape == x_jax.shape
-            assert not np.any(np.isnan(gradients))
+
+            for method in ['cdf', 'icdf', 'dsort']:
+                gradients = grad_fn(x_jax, x_true_jax, method=method, num_rotations=10)
+                
+                assert gradients.shape == x_jax.shape
+                assert not np.any(np.isnan(gradients))
+
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -170,11 +179,13 @@ class TestWassersteinDistanceImages:
             
             x_jax_small = jnp.array(x_small)
             x_true_jax_small = jnp.array(x_true_small)
-            
-            loss_small = wasserstein_distance_loss_images(x_jax_small, x_true_jax_small, method='dsort', num_rotations=10).sum()
-            
-            assert not np.isnan(float(loss_small))
-            assert float(loss_small) >= 0
+
+            for method in ['cdf', 'icdf', 'dsort']:
+                loss_small = wasserstein_distance_loss_images(x_jax_small, x_true_jax_small, method=method, num_rotations=10).sum()
+                
+                assert not np.isnan(float(loss_small))
+                assert float(loss_small) >= 0
+
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -194,7 +205,7 @@ class TestWassersteinDistanceImages:
             # Get backend and create a wrapper that adds batch dimension
             backend = get_backend("jax")
             
-            def single_image_loss(x_single, x_true_single, method,num_rotations):
+            def single_image_loss(x_single, x_true_single, method, num_rotations):
                 # Add batch dimension for single images
                 x_batch = x_single[None, ...]  # (H, W) -> (1, H, W)
                 x_true_batch = x_true_single[None, ...]
@@ -203,11 +214,13 @@ class TestWassersteinDistanceImages:
             # Vectorize over batch dimension
             vmap_loss = jax.vmap(single_image_loss, in_axes=(0, 0, None, None))
             num_rotations=10
-            losses = vmap_loss(x_jax, x_true_jax, 'dsort', num_rotations)  # 
-            
-            assert losses.shape == (x_jax.shape[0],)  # One loss per image pair
-            assert not np.any(np.isnan(losses))
-            assert np.all(losses >= 0)
+            for method in ['cdf', 'icdf', 'dsort']:
+                losses = vmap_loss(x_jax, x_true_jax, method, num_rotations)  # 
+                
+                assert losses.shape == (x_jax.shape[0],)  # One loss per image pair
+                assert not np.any(np.isnan(losses))
+                assert np.all(losses >= 0)
+
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -223,18 +236,19 @@ class TestWassersteinDistanceImages:
             x_tiny = jax.random.normal(key, (1, 4, 4))
             key, subkey = jax.random.split(key)
             x_true_tiny = jax.random.normal(subkey, (1, 4, 4))
-            
-            loss_tiny = wasserstein_distance_loss_images(x_tiny, x_true_tiny, method='dsort', num_rotations=5).sum()
-            assert not np.isnan(float(loss_tiny))
-            assert float(loss_tiny) >= 0
-            
-            # Test with constant images
-            x_constant = jnp.ones((1, 8, 8))
-            x_true_constant = jnp.zeros((1, 8, 8))
-            
-            loss_constant = wasserstein_distance_loss_images(x_constant, x_true_constant, method='dsort', num_rotations=5).sum()
-            assert not np.isnan(float(loss_constant))
-            assert float(loss_constant) >= 0
+
+            for method in ['cdf', 'icdf', 'dsort']:
+                loss_tiny = wasserstein_distance_loss_images(x_tiny, x_true_tiny, method=method, num_rotations=5).sum()
+                assert not np.isnan(float(loss_tiny))
+                assert float(loss_tiny) >= 0
+
+                # Test with constant images
+                x_constant = jnp.ones((1, 8, 8))
+                x_true_constant = jnp.zeros((1, 8, 8))
+                
+                loss_constant = wasserstein_distance_loss_images(x_constant, x_true_constant, method=method, num_rotations=5).sum()
+                assert not np.isnan(float(loss_constant))
+                assert float(loss_constant) >= 0
             
         except ImportError:
             pytest.skip("JAX backend not available")
