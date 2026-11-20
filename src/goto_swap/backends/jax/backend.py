@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import dm_pix
 from flax import nnx
 
+from goto_swap.backends.jax.fourier_slice import fourier_slice_2d_to_1d
+
 from .. import BackendInterface
 from .emd import emd_1d_sorted_jax_differentiable
 
@@ -25,6 +27,7 @@ class JAXBackend(BackendInterface):
         self, 
         x: jnp.ndarray, 
         x_true: jnp.ndarray, 
+        projection_method: str,
         method: str,
         num_rotations: int,
         n_interpolation_points: int = 1000,
@@ -39,7 +42,7 @@ class JAXBackend(BackendInterface):
             x: Predicted images (B, H, W) 
             x_true: True images (B, H, W) 
             num_rotations: Number of rotation angles to use
-            
+            projection_method: Method for projecting 2D images to 1D (e.g., 'real' or 'fourier_slice')
         Returns:
             Wasserstein distance loss
         """
@@ -63,25 +66,52 @@ class JAXBackend(BackendInterface):
         x_true = x_true * mask
 
         # Rotate images
-        rotate_batch_over_rotations = jax.vmap(
-            lambda img, rotations: dm_pix.rotate(img, rotations, mode="wrap"),
-            in_axes=(None, 0)
-        )
-        rotate = jax.vmap(
-            lambda imgs, rotations: rotate_batch_over_rotations(imgs, rotations), 
-            in_axes=(0, None)
-        )
-        in_plane_rotations = jnp.linspace(0, jnp.pi, num_rotations, endpoint=False)
-        rotated_x = rotate(x[..., None], in_plane_rotations)[..., 0]
-        rotated_x_true = rotate(x_true[..., None], in_plane_rotations)[..., 0]
+        if projection_method == 'real_rotate':
+            rotate_batch_over_rotations = jax.vmap(
+                lambda img, rotations: dm_pix.rotate(img, rotations, mode="wrap"),
+                in_axes=(None, 0)
+            )
+            rotate = jax.vmap(
+                lambda imgs, rotations: rotate_batch_over_rotations(imgs, rotations), 
+                in_axes=(0, None)
+            )
+            in_plane_rotations = jnp.linspace(0, jnp.pi, num_rotations, endpoint=False)
+            rotated_x = rotate(x[..., None], in_plane_rotations)[..., 0]
+            rotated_x_true = rotate(x_true[..., None], in_plane_rotations)[..., 0]
 
-        # Split in positive and negative
-        rotated_x_pos, rotated_x_neg = nnx.relu(rotated_x), nnx.relu(-rotated_x)
-        rotated_x_true_pos, rotated_x_true_neg = nnx.relu(rotated_x_true), nnx.relu(-rotated_x_true)
+            # Split in positive and negative
+            rotated_x_pos, rotated_x_neg = nnx.relu(rotated_x), nnx.relu(-rotated_x)
+            rotated_x_true_pos, rotated_x_true_neg = nnx.relu(rotated_x_true), nnx.relu(-rotated_x_true)
+        
+            # 1D strips
+            strips_x_pos, strips_x_neg = rotated_x_pos.sum(axis=-1), rotated_x_neg.sum(axis=-1)  # (B, n_proj, n)
+            strips_x_true_pos, strips_x_true_neg = rotated_x_true_pos.sum(axis=-1), rotated_x_true_neg.sum(axis=-1)  # (B, n_proj, n)
 
-        # 1D strips
-        strips_x_pos, strips_x_neg = rotated_x_pos.sum(axis=-1), rotated_x_neg.sum(axis=-1)  # (B, n_proj, n)
-        strips_x_true_pos, strips_x_true_neg = rotated_x_true_pos.sum(axis=-1), rotated_x_true_neg.sum(axis=-1)  # (B, n_proj, n)
+        elif projection_method == 'fourier_slice':
+            fourier_slice_batch_over_rotations = jax.vmap(
+                lambda img, angle: fourier_slice_2d_to_1d(img, angle),
+                in_axes=(None, 0),
+            )
+
+            fourier_slice_fn = jax.vmap(
+                lambda imgs, angles: fourier_slice_batch_over_rotations(imgs, angles),
+                in_axes=(0, None),
+            )
+
+            in_plane_rotations = jnp.linspace(
+                0, jnp.pi, num_rotations, endpoint=False
+            )
+
+            sliced_x = fourier_slice_fn(x, in_plane_rotations)
+            sliced_x_true = fourier_slice_fn(x_true, in_plane_rotations)
+
+            # split in positive and negative
+            strips_x_pos, strips_x_neg = nnx.relu(sliced_x), nnx.relu(-sliced_x)
+            strips_x_true_pos, strips_x_true_neg = nnx.relu(sliced_x_true), nnx.relu(-sliced_x_true)
+        else:
+            raise ValueError(f"Unknown projection method '{projection_method}'. Supported methods are 'real_rotate', 'fourier_slice'.")
+
+
 
         
         if method == 'icdf':

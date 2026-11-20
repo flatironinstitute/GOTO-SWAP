@@ -110,6 +110,7 @@ def get_backend(backend: str = "jax") -> BackendInterface:
 def wasserstein_distance_loss_images(
     x: ArrayLike, 
     x_true: ArrayLike, 
+    projection_method: str,
     method: str,
     num_rotations: int = 100,
     backend: str = "jax"
@@ -120,6 +121,8 @@ def wasserstein_distance_loss_images(
     Args:
         x: Predicted images
         x_true: True images  
+        projection_method: Method for projecting 2D images to 1D
+        method: Method for computing the Wasserstein distance
         num_rotations: Number of rotation angles
         backend: Backend to use ("jax" or "pytorch")
         
@@ -127,7 +130,7 @@ def wasserstein_distance_loss_images(
         Wasserstein distance loss
     """
     backend_impl = get_backend(backend)
-    return backend_impl.wasserstein_distance_loss_images(x, x_true, method, num_rotations)
+    return backend_impl.wasserstein_distance_loss_images(x, x_true, projection_method, method, num_rotations)
 
 
 def emd_1d_sorted_differentiable(
