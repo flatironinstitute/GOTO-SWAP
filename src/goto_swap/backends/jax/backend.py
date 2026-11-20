@@ -89,24 +89,6 @@ class JAXBackend(BackendInterface):
 
         elif projection_method == 'fourier_slice':
 
-
-            # fourier_slice_batch_over_rotations = jax.vmap(
-            #     lambda img, angle: fourier_slice_2d_to_1d(img, angle),
-            #     in_axes=(None, 0),
-            # )
-
-            # fourier_slice_fn = jax.vmap(
-            #     lambda imgs, angles: fourier_slice_batch_over_rotations(imgs, angles),
-            #     in_axes=(0, None),
-            # )
-
-            # in_plane_rotations = jnp.linspace(
-            #     0, jnp.pi, num_rotations, endpoint=False
-            # )
-
-            # sliced_x = fourier_slice_fn(x, in_plane_rotations)
-            # sliced_x_true = fourier_slice_fn(x_true, in_plane_rotations)
-
             # Precompute once per image
             fourier_x = jax.vmap(
                 lambda img: fourier_slice_2d_to_1d_precompute(
