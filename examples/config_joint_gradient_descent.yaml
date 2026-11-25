@@ -10,7 +10,7 @@ setup:
     image:
         grid_size: 128
         pixel_size: 1.0
-        pad_size: 128 
+        pad_size: ${setup.image.grid_size} 
     integrator:
         atom_width: 0.25
         atom_amplitude: 1.0
@@ -34,14 +34,15 @@ setup:
 
 
 optimization:
-    learning_rate: 0.00012
-    n_iterations: 5000
+    learning_rate: 1.0
+    n_iterations: 1000
     print_every: 10
-    use_this_objective: sw_dsort
+    use_this_objective: sw_cdf
     sliced_wasserstein:
         n_projections: 10
         n_pixels: 1000
         normalize_safely_epsilon: 1e-8
+        projection_method: real_rotate
     preconditioner: 
       l2: # lr 0.00001
         cv: 10

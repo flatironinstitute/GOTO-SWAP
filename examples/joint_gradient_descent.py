@@ -107,6 +107,7 @@ class SlicedWassersteinConfig:
     n_projections: int
     n_pixels: int
     normalize_safely_epsilon: float
+    projection_method: str
 
 
 @dataclass
@@ -333,6 +334,8 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         #                 m2=jnp.mean(image_2))
         return jnp.linalg.norm(image_1 - image_2)
 
+    projection_method = sliced_wasserstein.projection_method
+    assert projection_method in ['fourier_slice', 'real_rotate'], f"projection_method must be either 'fourier_slice' or 'real_rotate', got {projection_method}"
     if use_this_objective == 'sw':
         if benchmark_time: s = time()
 
@@ -363,6 +366,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise_dose, noise_background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
+                                                    projection_method=projection_method,
                                                      method='cdf'
                                                      ).mean()
         if benchmark_time: 
@@ -374,6 +378,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise_dose, noise_background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
+                                                     projection_method=projection_method,
                                                      method='dsort'
                                                      ).mean()
         if benchmark_time: 
@@ -385,6 +390,7 @@ def loss_for_pose_and_cv(image_ref, image_model, wxyz, cv_scalar, defocus_scalar
         result = jax_backend.wasserstein_distance_loss_images(apply_background_and_dose(image_1, noise_dose, noise_background).reshape(1, n_pix, n_pix), 
                                                      image_ref.reshape(1, n_pix, n_pix),
                                                      num_rotations=sliced_wasserstein.n_projections,
+                                                     projection_method=projection_method,
                                                      method='icdf'
                                                      ).mean()
         if benchmark_time: 
