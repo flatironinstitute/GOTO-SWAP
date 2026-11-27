@@ -60,7 +60,7 @@ all = [
 ]
 
 # Development dependencies
-test = ["pytest>=6.0", "pytest-cov"]
+test = ["pytest>=6.0", "pytest-cov", "pot", "scikit-learn"]
 
 docs = [
     "sphinx",

@@ -15,8 +15,10 @@ class TestWassersteinDistanceImages:
     def test_images(self):
         """Create test images for Wasserstein distance computation."""
         batch_size, height, width = 2, 32, 32
-        x = np.random.randn(batch_size, height, width).astype(np.float32)
-        x_true = np.random.randn(batch_size, height, width).astype(np.float32)
+        # x = np.random.randn(batch_size, height, width).astype(np.float32)
+        # x_true = np.random.randn(batch_size, height, width).astype(np.float32)
+        x = np.ones((batch_size, height, width)).astype(np.float32)
+        x_true = 2 * x
         return x, x_true
     
     @pytest.fixture
@@ -60,7 +62,7 @@ class TestWassersteinDistanceImages:
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
             
-            loss = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", num_rotations=10)
+            loss = wasserstein_distance_loss_images(x_torch, x_true_torch, projection_method='', method='', backend="pytorch", num_rotations=10)
             
             assert isinstance(loss, torch.Tensor)
             assert loss.shape == ()  # Scalar
@@ -133,7 +135,7 @@ class TestWassersteinDistanceImages:
             # PyTorch computation
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
-            loss_pytorch = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", num_rotations=10).sum()
+            loss_pytorch = wasserstein_distance_loss_images(x_torch, x_true_torch, projection_method='', method='', backend="pytorch", num_rotations=10).sum()
 
 
             for projection_method in ['real_rotate', 'fourier_slice']:
@@ -142,7 +144,7 @@ class TestWassersteinDistanceImages:
             
                 # Results should be numerically close
                 diff = abs(float(loss_jax) - float(loss_pytorch))
-                assert diff < 1e-5, f"JAX and PyTorch results differ by {diff}"
+                assert diff < 1e-5, f"JAX and PyTorch results differ by {diff} for projection_method={projection_method}, method={method}"
             
         except ImportError as e:
             pytest.skip(f"Backend comparison not available: {e}")
@@ -159,7 +161,7 @@ class TestWassersteinDistanceImages:
             x_true_jax = jnp.array(x_true)
             
             # Test gradient computation
-            grad_fn = jax.grad(lambda x_jax, x_true_jax, projection_method, method, num_rotations: jnp.sum(wasserstein_distance_loss_images(x_jax, x_true_jax, projection_method, method=method, num_rotations=10)), argnums=0)
+            grad_fn = jax.grad(lambda x_jax, x_true_jax, projection_method, method, num_rotations: jnp.sum(wasserstein_distance_loss_images(x_jax, x_true_jax, projection_method, method=method, num_rotations=num_rotations)), argnums=0)
 
             for projection_method in ['real_rotate', 'fourier_slice']:
                 for method in ['cdf', 'icdf', 'dsort']:

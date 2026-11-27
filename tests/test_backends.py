@@ -158,7 +158,7 @@ class TestPyTorchBackend:
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
             
-            loss = backend.wasserstein_distance_loss_images(x_torch, x_true_torch, num_rotations=5)
+            loss = backend.wasserstein_distance_loss_images(x_torch, x_true_torch, projection_method='', method='', num_rotations=5)
             
             # Check output properties
             assert isinstance(loss, torch.Tensor)
@@ -178,7 +178,7 @@ class TestPyTorchBackend:
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
             
-            loss = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", num_rotations=5)
+            loss = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", projection_method='', method='', num_rotations=5)
             
             assert isinstance(loss, torch.Tensor)
             assert not torch.isnan(loss)
