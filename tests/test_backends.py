@@ -57,15 +57,20 @@ class TestJAXBackend:
             x, x_true = test_data_small
             x_jax = jnp.array(x)
             x_true_jax = jnp.array(x_true)
-            
-            loss = backend.wasserstein_distance_loss_images(x_jax, x_true_jax, num_rotations=5)
-            
-            # Check output properties
-            assert isinstance(loss, jnp.ndarray)
-            assert loss.shape == ()  # Scalar
-            assert not np.isnan(float(loss))
-            assert not np.isinf(float(loss))
-            assert float(loss) >= 0  # Loss should be non-negative
+
+            for projection_method in ['real_rotate', 'fourier_slice']:
+                for method in ['cdf', 'icdf', 'dsort']:
+                    loss = backend.wasserstein_distance_loss_images(x_jax, x_true_jax, 
+                        projection_method=projection_method,
+                        method=method, 
+                        num_rotations=5).sum()
+                    
+                    # Check output properties
+                    assert isinstance(loss, jnp.ndarray)
+                    assert loss.shape == ()  # Scalar
+                    assert not np.isnan(float(loss))
+                    assert not np.isinf(float(loss))
+                    assert float(loss) >= 0  # Loss should be non-negative
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -77,11 +82,13 @@ class TestJAXBackend:
             x, x_true = test_data_small
             x_jax = jnp.array(x)
             x_true_jax = jnp.array(x_true)
-            
-            loss = wasserstein_distance_loss_images(x_jax, x_true_jax, num_rotations=5)
-            
-            assert isinstance(loss, jnp.ndarray)
-            assert not np.isnan(float(loss))
+
+            for projection_method in ['real_rotate', 'fourier_slice']:
+                for method in ['cdf', 'icdf', 'dsort']:
+                    loss = wasserstein_distance_loss_images(x_jax, x_true_jax, projection_method=projection_method, method=method, num_rotations=5).sum()
+                    
+                    assert isinstance(loss, jnp.ndarray)
+                    assert not np.isnan(float(loss))
             
         except ImportError:
             pytest.skip("JAX backend not available")
@@ -151,7 +158,7 @@ class TestPyTorchBackend:
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
             
-            loss = backend.wasserstein_distance_loss_images(x_torch, x_true_torch, num_rotations=5)
+            loss = backend.wasserstein_distance_loss_images(x_torch, x_true_torch, projection_method='', method='', num_rotations=5)
             
             # Check output properties
             assert isinstance(loss, torch.Tensor)
@@ -171,7 +178,7 @@ class TestPyTorchBackend:
             x_torch = torch.from_numpy(x)
             x_true_torch = torch.from_numpy(x_true)
             
-            loss = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", num_rotations=5)
+            loss = wasserstein_distance_loss_images(x_torch, x_true_torch, backend="pytorch", projection_method='', method='', num_rotations=5)
             
             assert isinstance(loss, torch.Tensor)
             assert not torch.isnan(loss)
@@ -342,14 +349,17 @@ class TestBackendCompatibility:
                 x_true_backend = torch.from_numpy(x_true)
             
             # Test multiple runs produce consistent results
-            loss1 = backend.wasserstein_distance_loss_images(x_backend, x_true_backend, num_rotations=5)
-            loss2 = backend.wasserstein_distance_loss_images(x_backend, x_true_backend, num_rotations=5)
-            
-            # Results should be identical (deterministic)
-            if backend_name == "jax":
-                assert float(loss1) == float(loss2)
-            else:  # pytorch
-                assert torch.allclose(loss1, loss2)
+            for projection_method in ['real_rotate', 'fourier_slice']:
+                for method in ['cdf', 'icdf', 'dsort']:
+                    loss1 = backend.wasserstein_distance_loss_images(x_backend, x_true_backend, projection_method=projection_method, method=method, num_rotations=5).sum()
+                    loss2 = backend.wasserstein_distance_loss_images(x_backend, x_true_backend, projection_method=projection_method, method=method, num_rotations=5).sum()
+                    
+                    # Results should be identical (deterministic)
+                    if backend_name == "jax":
+                        assert float(loss1) == float(loss2)
+                    else:  # pytorch
+                        assert torch.allclose(loss1, loss2)
+
                 
         except ImportError:
             pytest.skip(f"{backend_name} backend not available")
@@ -385,8 +395,10 @@ class TestBackendErrors:
             
             # This should work (broadcasting) or raise an appropriate error
             # The exact behavior depends on implementation
-            loss = backend.wasserstein_distance_loss_images(x_jax, x_wrong_jax, num_rotations=5)
-            assert not np.isnan(float(loss))
+            for projection_method in ['real_rotate', 'fourier_slice']:
+                for method in ['cdf', 'icdf', 'dsort']:
+                    loss = backend.wasserstein_distance_loss_images(x_jax, x_wrong_jax, projection_method=projection_method, method=method, num_rotations=5).sum()
+                    assert not np.isnan(float(loss))
             
         except ImportError:
             pytest.skip("JAX backend not available")

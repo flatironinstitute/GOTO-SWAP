@@ -36,4 +36,4 @@ def wasserstein_distance_loss_images(x, x_true, num_rotations=100):
         from goto_swap import wasserstein_distance_loss_images
         loss = wasserstein_distance_loss_images(x, x_true, backend="pytorch")
     """
-    return _new_wasserstein_distance_loss_images(x, x_true, num_rotations, backend="jax")
+    return _new_wasserstein_distance_loss_images(x, x_true, method='dsort', projection_method='real_rotate', num_rotations=num_rotations, backend="jax").sum()

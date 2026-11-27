@@ -23,6 +23,8 @@ class PyTorchBackend(BackendInterface):
         self, 
         x: torch.Tensor, 
         x_true: torch.Tensor, 
+        projection_method: str,
+        method: str,
         num_rotations: int = 100
     ) -> torch.Tensor:
         """
@@ -58,7 +60,7 @@ class PyTorchBackend(BackendInterface):
         x_true = x_true * mask
 
         # Generate rotation angles
-        in_plane_rotations = torch.linspace(0, math.pi, num_rotations, endpoint=False, device=device, dtype=dtype)
+        in_plane_rotations = torch.linspace(0, math.pi, num_rotations + 1, device=device, dtype=dtype)[:-1]  # Exclude the last angle to avoid duplication
         
         # Rotate images
         rotated_x = self._rotate_batch(x, in_plane_rotations)
@@ -138,7 +140,7 @@ class PyTorchBackend(BackendInterface):
         
         # Apply rotation
         grid = F.affine_grid(theta_expanded, x_expanded.size(), align_corners=False)
-        rotated = F.grid_sample(x_expanded, grid, mode='nearest', padding_mode='circular', align_corners=False)
+        rotated = F.grid_sample(x_expanded, grid, mode='nearest', padding_mode='border', align_corners=False)
         
         # Reshape back to (B, N, H, W)
         rotated = rotated.reshape(batch_size, num_angles, height, width)
@@ -147,7 +149,8 @@ class PyTorchBackend(BackendInterface):
     
     def _wasserstein_over_strips(self, strips_x: torch.Tensor, strips_x_true: torch.Tensor) -> torch.Tensor:
         """Compute Wasserstein distance over strips."""
-        eps = 1e-8
+        # eps from floating point of strips_x
+        eps = torch.finfo(strips_x.dtype).eps
         strips_x = strips_x / (strips_x.sum(dim=-1, keepdim=True) + eps)  # (B, N, n)
         strips_x_true = strips_x_true / (strips_x_true.sum(dim=-1, keepdim=True) + eps)  # (B, N, n)
 

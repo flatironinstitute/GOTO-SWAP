@@ -1,0 +1,98 @@
+setup:
+    specimen:
+        pdb_file: "/mnt/home/gwoollard/ceph/repos/GOTO-SWAP/examples/1BRS.pdb"
+        selection_string: '(not element H) and ((resi 1 to 863) or (resi 2913 to 3607))'
+        center: true
+    noise:
+        dose: 3000
+        background: 1.0
+        random_seed: 0
+    image:
+        grid_size: 128
+        pixel_size: 1.0
+        pad_size: ${setup.image.grid_size} 
+    integrator:
+        atom_width: 0.25
+        atom_amplitude: 1.0
+    pose:
+        euler_angles_deg:
+          phi_angle: 0.0
+          theta_angle: 0.0
+          psi_angle: 0.0
+        translation:
+          offset_x_in_angstroms: 0.0
+          offset_y_in_angstroms: 0.0
+    ctf:
+        defocus_in_angstroms: 5000.0
+        voltage: 300.0
+    envelope:
+        amplitude: 1.0
+        b_factor: 10.0
+    cv:
+        type: tear
+        value: 0.0
+
+
+optimization:
+    learning_rate: 1.0
+    n_iterations: 1000
+    print_every: 10
+    use_this_objective: sw_cdf
+    sliced_wasserstein:
+        n_projections: 10
+        n_pixels: 1000
+        normalize_safely_epsilon: 1e-8
+        projection_method: real_rotate
+    preconditioner: 
+      l2: # lr 0.00001
+        cv: 10
+        defocus: 1e4
+        quaternion: 0.01
+        offset: 1
+        noise_dose: 1e3
+        noise_background: 0.0001
+      sw: # sw with lr 0.01 and n_iterations 100 np 30, np 300
+        cv: 300.0
+        defocus: 1000000.0 # maybe higher?
+        quaternion: 0.1
+        offset: 100.0
+      sw_cdf: # lr: 1
+        cv: 5e7
+        defocus: 1e11
+        quaternion: 1e4
+        offset: 1e6
+        noise_dose: 0
+        noise_background: 5e4
+      sw_icdf: ${optimization.preconditioner.sw_cdf} # lr: 0.01
+      sw_dsort: ${optimization.preconditioner.sw_cdf} # lr:  0.00012
+    optimize_these_variables:
+      cv: true
+      defocus: true
+      rotation: true
+      translation: true
+      noise_dose: false
+      noise_background: true
+
+
+inference_model:
+    noise:
+        dose: ${setup.noise.dose}
+        background: 10 #${setup.noise.background}
+    initial_estimates:
+        cv:
+            type: ${setup.cv.type}
+            value: 30 #${setup.cv.value}
+        pose:
+            euler_angles_deg:
+              phi_angle: 20 #${setup.pose.euler_angles_deg.phi_angle}
+              theta_angle: 20 #${setup.pose.euler_angles_deg.theta_angle}
+              psi_angle: 20 #${setup.pose.euler_angles_deg.psi_angle}
+            translation:
+              offset_x_in_angstroms: -10 #${setup.pose.translation.offset_x_in_angstroms}
+              offset_y_in_angstroms: -10 #${setup.pose.translation.offset_y_in_angstroms}
+        ctf:
+            defocus_in_angstroms: 7000 #${setup.ctf.defocus_in_angstroms}
+            voltage: ${setup.ctf.voltage}
+    integrator:
+        atom_width: ${setup.integrator.atom_width}
+        atom_amplitude: ${setup.integrator.atom_amplitude}

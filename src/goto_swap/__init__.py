@@ -7,7 +7,14 @@ except PackageNotFoundError:
 
 # Import the new backend system
 from .backends import wasserstein_distance_loss_images, emd_1d_sorted_differentiable, get_backend
+from .backends.jax import fourier_slice_2d_to_1d
 
 # For backward compatibility, also import the old function name
 # This will use the default JAX backend
-__all__ = ["wasserstein_distance_loss_images", "emd_1d_sorted_differentiable", "get_backend", "__version__"]
+__all__ = [
+    "wasserstein_distance_loss_images",
+    "emd_1d_sorted_differentiable",
+    "get_backend",
+    "fourier_slice_2d_to_1d",
+    "__version__",
+]
