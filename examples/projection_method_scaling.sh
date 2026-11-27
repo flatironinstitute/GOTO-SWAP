@@ -1,4 +1,5 @@
-# for n_projections in 1 5 10 20 40 80 160 ; do for projection_method in fourier_slice real_rotate; do python joint_gradient_descent.py optimization.sliced_wasserstein.n_projections=${n_projections} optimization.sliced_wasserstein.projection_method=${projection_method} optimization.n_iterations=100; done; done
+# for n_projections in 1 5 10 20 40 80 160; do for projection_method in fourier_slice real_rotate; do python joint_gradient_descent.py optimization.sliced_wasserstein.n_projections=${n_projections} optimization.sliced_wasserstein.projection_method=${projection_method} optimization.n_iterations=100 setup.image.grid_size=256 setup.image.pixel_size=0.5; done; done
+
 logs_to_csv() {
     echo "fname_log,projection_method,n_projections,grid_size,pixel_size,time_per_iteration"
 
